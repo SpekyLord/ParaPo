@@ -1,0 +1,28 @@
+# Local research artifacts and original attachments
+/work/
+/outputs/
+/attachments/
+
+# Local settings and credentials
+.env
+.env.*
+!.env.example
+local.properties
+.idea/
+.DS_Store
+Thumbs.db
+
+# Generated Android/Python files
+.gradle/
+build/
+__pycache__/
+*.pyc
+.venv/
+
+# Collect and distribute datasets/models separately
+/data/
+/datasets/
+/models/
+*.pt
+*.tflite
+*.onnx
