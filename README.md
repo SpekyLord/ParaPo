@@ -50,7 +50,7 @@ Evaluate sign detection, OCR, route identification, incorrect green decisions, a
 
 ## Documents
 
-- [Product requirements](PRD.md): implementation scope, user flows, requirements, acceptance criteria, evaluation, and release gates.
+- [Product requirements](docs/PRD.md): implementation scope, user flows, requirements, acceptance criteria, evaluation, and release gates.
 
 - [Research brief](docs/research-brief.md): related work, feasibility, course-rubric alignment, dataset design, comparison protocol, and evaluation plan. Researched November 4, 2026.
 - [Original concept](docs/original-concept.md): the initial proposal, preserved for reference. Where its scope is broader, this README and the research brief describe the recommended first version.

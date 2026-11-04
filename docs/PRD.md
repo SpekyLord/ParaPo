@@ -11,7 +11,7 @@ Languages: Kotlin for the application; Python for model experiments; SQL/SQLite 
 
 ParaPo helps commuters find a direct jeepney journey and identify whether a specific visible jeepney is consistent with that journey. This document defines the first complete research prototype, its behavior, acceptance criteria, and evidence needed before demonstrating it as useful live assistance.
 
-This PRD is the implementation baseline. The [research brief](docs/research-brief.md) contains evidence and rationale; the [original concept](docs/original-concept.md) preserves the initial vision. Broader features in the original concept do not automatically enter this release. Requirements below are proposed product decisions, not claims that a feature exists or a performance target has been met.
+This PRD is the implementation baseline. The [research brief](research-brief.md) contains evidence and rationale; the [original concept](original-concept.md) preserves the initial vision. Broader features in the original concept do not automatically enter this release. Requirements below are proposed product decisions, not claims that a feature exists or a performance target has been met.
 
 ## 2. Problem and opportunity
 
@@ -324,4 +324,4 @@ Roles describe responsibilities, not assigned people. A small team may combine r
 
 Changes to coverage, direction rules, model comparison, offline promises, or evaluation targets require an explicit PRD update with rationale. Preserve the original held-out results if a later version is tuned using those examples; establish a new test set for new claims.
 
-Primary project references are the [research brief](docs/research-brief.md), its linked primary sources, the [original concept](docs/original-concept.md), and the supplied course rubric and lecture PDFs. Source documents are not redistributed here. External benchmark figures remain background evidence and must never be presented as ParaPo measurements.
+Primary project references are the [research brief](research-brief.md), its linked primary sources, the [original concept](original-concept.md), and the supplied course rubric and lecture PDFs. Source documents are not redistributed here. External benchmark figures remain background evidence and must never be presented as ParaPo measurements.
