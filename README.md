@@ -1,71 +1,61 @@
 # ParaPo
 
-**Camera-assisted jeepney route identification and direct-journey matching for selected Iloilo City routes.**
+ParaPo is an Android prototype for checking whether one verified directional jeepney route can take a commuter directly between two selected locations. The M2 build provides an offline manual planner; it does not include sign recognition.
 
-ParaPo is a proposed Android application that helps commuters answer:
+## Current implementation
 
-- Which jeepney routes can take me to my destination?
-- Does the jeepney in front of me match that journey?
+The single-module Kotlin app includes Home, Results, Route Details, Explore, and About / Data screens. It resolves curated names and aliases, reports ambiguous or unsupported locations, returns every eligible same-pattern direct journey, and shows a local route diagram with an ordered stop list. A Scan action explains that recognition is unavailable and retains the selected journey.
 
-## Project status
+The release catalog is intentionally empty. No authorized operational route records or approved reverification policy were available for this implementation, so the app cannot provide commuter route recommendations. Test-only synthetic routes are under `app/src/test` and `app/src/androidTest`; they are not bundled into the release. The app requests neither camera nor network permission, and no recognition model is included.
 
-**Research and planning.** This repository contains the concept and research brief. It does not yet contain a working Android application, trained models, collected dataset, or verified operational route database. Accuracy and real-time performance have not been established.
+## Toolchain
 
-## Initial scope
+- JDK 17
+- Gradle 8.11.1 through the checked-in Windows wrapper
+- Android Gradle Plugin 8.10.0
+- Kotlin Android plugin 2.2.10
+- Android SDK platform 36; minimum Android version API 34
 
-- Manual origin and destination selection.
-- Direct-journey lookup for 3–5 verified directional route patterns.
-- Route details and a route map.
-- Live camera sign detection, OCR, and matching to stored route information.
-- Daylight scanning with one targeted vehicle at a time.
-- Manual fallback when recognition fails.
+Set `ANDROID_HOME` to the Android SDK directory and `ANDROID_SDK_ROOT` to the same value. For a standard PowerShell SDK installation:
 
-The prototype will distinguish three outcomes using text as well as color:
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
+```
 
-| Result | Meaning |
-| --- | --- |
-| Green | Identified route and resolved direction match the selected journey. |
-| Red | The identified route and direction do not provide a direct match within verified coverage. |
-| Gray | Recognition, route coverage, or direction is uncertain. |
+The first Gradle run may download the pinned plugins and test libraries.
 
-An unsupported route is uncertain, not automatically a non-match. Reading a route name alone does not establish travel direction.
+## Build and test
 
-Transfers, fares, arrival-time prediction, citywide coverage, accounts, and full offline maps are outside the initial scope.
+From the repository root, build the debug app, run JVM tests, and run instrumentation tests on a connected Android API 34+ emulator or phone:
 
-## Proposed approach
+```powershell
+.\gradlew.bat clean assembleDebug testDebugUnitTest connectedDebugAndroidTest
+```
 
-Camera frame → sign detection → original-resolution sign crop → OCR → route candidates → directional journey check → labeled result.
+To build the release variant:
 
-The planned detector comparison is YOLOv8n, a precisely specified SSD MobileNetV2 variant, and EfficientDet-Lite0. All three must be tested on the same sign-detection task with fixed downstream OCR and route matching. Model selection remains subject to training, export, and target-phone feasibility tests.
+```powershell
+.\gradlew.bat assembleRelease
+```
 
-The proposed Android stack is Kotlin, CameraX, on-device OCR, a compatible mobile inference runtime, and local route storage. Python supports dataset preparation and experiments. These are candidates, not installed dependencies.
+The debug APK is `app/build/outputs/apk/debug/app-debug.apk`; the release APK is `app/build/outputs/apk/release/app-release-unsigned.apk`. Instrumentation tests use synthetic catalogs injected by the test application and cover manual navigation, selected-journey retention, permissions, and route-bundle validation/recovery.
 
-Directional route patterns will use ordered stop occurrences. A graph representation must preserve the route pattern so shared landmarks do not create accidental transfers. The initial graph operation is route-constrained reachability; shortest-distance algorithms are only needed if that objective is added.
+The planner compares directed `(patternId, sequence)` adjacency-list BFS against an independent ordered-list scan. The implementation notes and host-JVM measurements are in [M2 implementation evidence](docs/evidence/m2/implementation-2026-11-06.md). Those synthetic timings do not replace target-phone measurements.
 
-## Research question
+## Route data and offline behavior
 
-How accurately and quickly can a smartphone identify a jeepney route from its signage and match it to a selected journey while withholding a decision when the evidence is uncertain?
+An authorized route bundle is a ZIP containing `manifest.json` and `routes.sqlite`. The store checks the manifest, SHA-256 checksum, SQLite integrity and foreign keys, schema version, record references, ordered stops, coordinates, geometry anchors, source provenance, and pattern verification before replacing the installed database. A rejected update leaves the last valid database available, including after restart.
 
-Evaluate sign detection, OCR, route identification, incorrect green decisions, abstention rate, and end-to-end latency. Split data by independent vehicle encounters rather than randomly splitting adjacent video frames.
+No operational bundle is present in this repository. Route-data owners must supply authorized records and approve the reverification/invalidation policy before operational coverage can be added. Until then, the app clearly reports unavailable verified coverage and returns no route recommendations.
 
-## Documents
+## Project documents
 
-- [Product requirements](docs/PRD.md): implementation scope, user flows, requirements, acceptance criteria, evaluation, and release gates.
+- [Product requirements](docs/PRD.md)
+- [Research brief](docs/research-brief.md)
+- [Original concept](docs/original-concept.md)
+- [Phase task tracker](docs/phasetask.md)
 
-- [Research brief](docs/research-brief.md): related work, feasibility, course-rubric alignment, dataset design, comparison protocol, and evaluation plan. Researched November 4, 2026.
-- [Original concept](docs/original-concept.md): the initial proposal, preserved for reference. Where its scope is broader, this README and the research brief describe the recommended first version.
+## Limitations and next work
 
-## Next steps
-
-1. Collect a small sign-readability pilot on the intended Android phone.
-2. Verify selected boarding points and directional route patterns.
-3. Build manual direct-journey lookup and route details.
-4. Prove training and mobile export for all three detector candidates.
-5. Collect and label the experimental dataset; run the controlled comparison.
-6. Integrate and evaluate the scanner, including uncertain and unsupported cases.
-
-No build or test commands are available yet. Course materials, temporary research files, camera recordings, and model weights are not included.
-
-## Limitations
-
-This project is a proposed commuting aid, not validated boarding guidance. Route data may become outdated. Recognition must return an uncertain result when it cannot establish a route or direction. Field testing is required before claiming useful recognition of approaching vehicles.
+This M2 build does not identify vehicles, use a camera, access a network map, infer reverse travel, support transfers, or establish live route accuracy. The Tecno KJ8 (Spark 20 Pro 5G) Android 14/API 34 build has been inspected, and synthetic UI/recovery checks passed on the phone while offline. A known operational journey and offline use with an authorized route bundle remain untested because no verified route data is available. Operational planning requires authorized directional route records, independent verification, and owner approval.
