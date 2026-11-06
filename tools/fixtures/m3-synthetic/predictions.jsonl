@@ -1,0 +1,1 @@
+{"sample_id":"syn-val-1","detections":[{"box":[10,10,40,40],"score":0.9,"route_id":"R1","pattern_id":"P1","direction":"outbound"}]}
