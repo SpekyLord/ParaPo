@@ -1,9 +1,9 @@
 # ParaPo M2 implementation evidence
 
 - **Evidence date:** 2026-11-06
-- **Source baseline:** `main` at `082a9e283d4848567db5d43c5555183323f14936`; implementation files are uncommitted.
+- **Source baseline:** M2 implementation branch `codex/implement-parapo-m2`, based on `f5cedcd`; route data and evidence changes are included in the current delivery.
 - **Application:** `com.parapo.prototype`, version `0.1.0` (version code 1).
-- **Route data:** no operational dataset or bundle. Dataset version shown by the app is `none`.
+- **Route data:** `iloilo-jaro-wvsu-2026-11-06`, two approved corridors represented as four active directional patterns; SQLite v1 bundled in the release APK.
 
 ## Implemented
 
@@ -11,7 +11,7 @@
 - Manual location resolution has missing, unsupported, unique, ambiguous, and identical-endpoint handling. Direct results keep their route pattern and boarding/alighting occurrences; Scan opens an unavailable-recognition explanation while retaining that journey.
 - The planner uses directed `(patternId, sequence)` adjacency and BFS. `OrderedScanBaseline` independently scans preordered stop lists. Inactive and unverified patterns are excluded.
 - A versioned ZIP bundle contract with `manifest.json` and `routes.sqlite`, SHA-256 verification, SQLite schema/integrity/foreign-key checks, strict numeric/boolean decoding, catalog validation, staged installation, atomic replacement, and backup recovery.
-- A deliberately empty release catalog. Synthetic route data exists only in test source sets. The app does not request camera or network permission, and no recognition model is included.
+- A limited Jaro Plaza–WVSU route catalog for Iloilo Routes 3 and 10, in both mapped directions. Source maps and hashes are preserved in `docs/evidence/m2/source-maps/`. Synthetic route data remains test-only. The app requests neither camera nor internet permission, and no recognition model is included.
 
 ## Toolchain and run environment
 
@@ -35,16 +35,18 @@
 .\gradlew.bat assembleRelease
 ```
 
-**Final results:** the clean debug command succeeded, including 11 JVM tests and 8 instrumentation tests on the API 37 AVD. Release assembly and its lint-vital task succeeded. The release APK is unsigned and is not a store-ready delivery.
+**Final results:** `clean assembleDebug testDebugUnitTest connectedDebugAndroidTest` succeeded, including 11 JVM tests and 10 connected instrumentation tests on the TECNO KJ8. Release assembly and lint-vital succeeded. The unsigned release APK is not a store-ready delivery. The earlier Pixel AVD run completed 8 instrumentation tests before the real-route UI assertions were added.
 
-The connected-phone run used `ANDROID_SERIAL` set to the TECNO KJ8 and `.\gradlew.bat connectedDebugAndroidTest`. All 9 instrumentation tests passed on Android 14/API 34 while the device had no active default network. This included the synthetic manual journey through Results, Details, and Scan fallback; Explore/About screens; bundle rejection/recovery; permission checks; and on-device benchmarks. After the test runner removed its package, the debug APK was installed with fresh app data; its Home screen showed unavailable verified coverage and no synthetic route state.
+The final connected-phone run used the TECNO KJ8 on Android 14/API 34 with no active default network. All 10 instrumentation tests passed, including real-bundle searches in both directions, Explore, About/Data, bundle validation/recovery, permission checks, synthetic planner cases, and on-device benchmarks. A fresh debug install then loaded the actual bundled route data. An ADB-driven on-device walkthrough with Wi-Fi and mobile data service disabled searched Jaro Cathedral → WVSU, opened route results and Route 10 details, and opened the Scan fallback with the selected journey retained. This is phone UI evidence, not independent field observation.
 
 | Artifact | Local output | SHA-256 |
 | --- | --- | --- |
-| Debug APK | `app/build/outputs/apk/debug/app-debug.apk` | `2D8F7BAAFED05AA13C7CAC808EE7B96A9D06F266460D9761C9E9E985D9D61C53` |
-| Unsigned release APK | `app/build/outputs/apk/release/app-release-unsigned.apk` | `0EE5EBB7B045F0E35FFF3C7C06A5C2E889D6ACE6F7DEE5ACE1D35B831F2142F6` |
+| Debug APK | `app/build/outputs/apk/debug/app-debug.apk` | `8FDF99596715F83530FE5E8302F1C86E2299E8CA0DA2BADA676BC341F241BBB9` |
+| Unsigned release APK | `app/build/outputs/apk/release/app-release-unsigned.apk` | `CF818AA306E68F1FE0C77A217132B4F908BA5B7C2021F9302844CFF696D299B0` |
+| Route bundle | `app/src/main/assets/routes.bundle` | `D55CA576D90F95DE941E6E13A4D9A1758CA010811AE188D600F3698BDF07DBF9` |
+| SQLite payload checksum | `manifest.json` → `sqliteSha256` | `61035F47264379D600068D6BF9E3A12EC3FBF6298A741A37BDF64C1E2E58B4B8` |
 
-The release DEX was scanned for `SYN-UI`, `SYN-FWD`, `synthetic-test-only`, and `Synthetic Route`; none were present. The APK has no `assets/routes.bundle`. `aapt dump permissions` listed the package and no requested permissions. Instrumentation also verified that camera and internet are absent from the app's requested-permission list.
+The release APK contains the exact checked-in `assets/routes.bundle`. Release DEX was scanned for `SYN-UI`, `SYN-FWD`, `SYN-ROUTE`, `synthetic-test-only`, and `Synthetic test fixture`; none were present. `aapt dump permissions` listed only the package name, with no requested permissions. Instrumentation also verified that camera and internet are absent from the app's requested-permission list.
 
 ## Automated evidence
 
@@ -54,12 +56,12 @@ JVM reports are under `app/build/test-results/testDebugUnitTest/`. The current p
 - Location tests cover missing, unsupported, unique, and ambiguous names, plus a repeated alias on one location.
 - Catalog validation tests cover duplicate IDs, missing references, invalid coordinates and ordering, incomplete stop/permission coverage, geometry anchors, and missing provenance.
 - Android bundle tests install a valid synthetic database, then reject checksum mismatch, malformed SQLite, broken references, invalid and nonnumeric coordinates/sequences, incomplete patterns, invalid geometry anchors, duplicate/incomplete provenance, malformed/interrupted input, and damaged updates. They verify the prior valid data remains readable after rejection/restart and backup recovery.
-- UI instrumentation covers empty-catalog messaging, unknown locations, Explore and About / Data, a synthetic direct journey through details and Scan fallback, and permission absence.
-- The same manual navigation and bundle recovery tests passed on the physical TECNO KJ8 with wireless networking disabled. These are automated UI/recovery checks using test-only fixtures, not human field observations or operational route validation.
+- UI instrumentation covers empty-catalog messaging, unknown locations, Explore/About, permission absence, and the actual bundled patterns in both directions through Results, Details, and the real-data Explore screen.
+- The final Tecno walkthrough used the installed release-scope route catalog while Android reported no active default network; the route diagram, ordered stop text, provenance, and Scan fallback all appeared. The interaction was driven over ADB rather than by the user's physical touch, and it does not verify live service or curbside stop operations.
 
 ### Test attempt history
 
-The first API 37 UI instrumentation attempt used Espresso and failed because its input-method hook called the unavailable `android.hardware.input.InputManager.getInstance` method. A first run also lost the app process under the AVD's default 2 GiB memory. The UI test was changed to use `ActivityScenario` with native view actions, Espresso was removed, and the AVD was restarted with 4 GiB. The clean Pixel run completed 8 tests; the follow-up physical-phone run completed all 9 after adding the on-device benchmark. The earlier failure output was observed in the implementation session; the current physical-device Gradle report contains the passing rerun.
+The first API 37 UI instrumentation attempt used Espresso and failed because its input-method hook called the unavailable `android.hardware.input.InputManager.getInstance` method. A first run also lost the app process under the AVD's default 2 GiB memory. The UI test was changed to use `ActivityScenario` with native view actions, Espresso was removed, and the AVD was restarted with 4 GiB. A later route-source wording change left one stale test assertion; the next clean run passed all 10 Tecno instrumentation tests. An OEM lock-screen overlay prompt appeared during an earlier first-launch attempt and was not granted; it did not appear during the final fresh install. ParaPo requests no overlay or camera permission.
 
 ## Data-structure explanation and measurements
 
@@ -89,6 +91,8 @@ The physical-phone benchmark uses the same planner/resolver methods in `PlannerD
 
 Raw phone measurements are in `app/build/outputs/androidTest-results/connected/debug/TECNO KJ8 - 14/logcat-com.parapo.prototype.routing.PlannerDeviceBenchmarkTest-measuresPlannerAndAliasLookupAtPlannedSizes.txt`. These are synthetic local-operation measurements, not full-dataset lookup performance or a release acceptance result.
 
-## Acceptance still open
+## Acceptance scope
 
-M1-02 and M2-03 are closed in the tracker using the phone inventory and build/test evidence above. All other M2 items remain open because operational coverage still requires authorized directional records and independent verification, and the route-data owner must approve reverification and invalidation policy. The physical-phone offline tests used synthetic test-only routes; they do not establish a known operational journey, service coverage, or field accuracy. The release catalog remains empty.
+The tracker records M2-01–M2-17 as complete for the approved Jaro Plaza–WVSU corridor and the DSA prototype. The project lead is the route-data steward; the documented policy rechecks sources at least every 90 days, before each release, and on a route-change report. Conflicting or unconfirmed patterns are disabled pending review.
+
+This does not establish complete service coverage for Routes 3 or 10, exact curbside boarding locations, service schedules/frequency, temporary detours, or independent agency endorsement beyond the supplied City Planning maps and LTFRB route source. The route drawing is schematic. A Tecno OEM overlay prompt was not granted; no such permission is requested by the app. The release APK is unsigned.

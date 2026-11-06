@@ -3,6 +3,7 @@ package com.parapo.prototype.ui
 import android.view.View
 import android.view.ViewGroup
 import android.content.pm.PackageManager
+import java.io.File
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -11,6 +12,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.parapo.prototype.ParapoApplication
 import com.parapo.prototype.R
+import com.parapo.prototype.data.RouteBundleStore
 import com.parapo.prototype.data.DatasetInfo
 import com.parapo.prototype.data.GeometryPoint
 import com.parapo.prototype.data.Location
@@ -68,6 +70,40 @@ class MainActivityTest {
                 assertHasText(activity, "No verified routes are available to browse.")
                 click(activity, "About / Data")
                 assertHasText(activity, "Dataset version: none")
+                assertHasText(activity, "Recognition model: Not included in this M2 build.")
+            }
+        }
+    }
+
+    @Test fun bundledRouteMapsPlanJaroPlazaToWvsuInBothDirections() {
+        listOf("routes.sqlite", "routes.sqlite.backup", "routes.sqlite.pending").forEach {
+            File(app.filesDir, it).delete()
+        }
+        app.catalogLoader = { context -> RouteBundleStore(context).load() }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                assertHasText(activity, "Verified coverage: Jaro Plaza ↔ WVSU on Routes 3 and 10 only. Other routes and transfers are not covered.")
+                activity.findViewById<EditText>(R.id.home_origin).setText("Jaro Cathedral")
+                activity.findViewById<EditText>(R.id.home_destination).setText("WVSU")
+                click(activity, "Find routes")
+                assertHasText(activity, "Route 3 — Ungka to City Proper via CPU · Jaro Plaza to WVSU via E. Lopez Street")
+                assertHasText(activity, "Route 10 — Buntatala/Tagbak to City Proper · Jaro Plaza to WVSU via Commission Civil and Del Carmen Streets")
+                click(activity, "Details")
+                assertHasText(activity, "Source: Iloilo City Planning route maps for Route 3 Ungka–CPU and Route 10 Buntatala/Tagbak; project lead approved the Jaro Plaza–WVSU corridor and confirmed the Jaro Plaza direction")
+                assertTrue(descendants(activity.findViewById(R.id.app_root)).any { it is RouteDiagramView })
+                click(activity, "Back")
+                click(activity, "Back to plan")
+                activity.findViewById<EditText>(R.id.home_origin).setText("WVSU")
+                activity.findViewById<EditText>(R.id.home_destination).setText("Jaro Plaza")
+                click(activity, "Find routes")
+                assertHasText(activity, "Route 3 — Ungka to City Proper via CPU · WVSU to Jaro Plaza via La Paz Market and E. Lopez Street")
+                assertHasText(activity, "Route 10 — Buntatala/Tagbak to City Proper · WVSU to Jaro Plaza via La Paz Market and Commission Civil")
+                click(activity, "Explore")
+                assertHasText(activity, "Route 3 — Ungka to City Proper via CPU · Jaro Plaza to WVSU via E. Lopez Street")
+                assertHasText(activity, "Route 10 — Buntatala/Tagbak to City Proper · WVSU to Jaro Plaza via La Paz Market and Commission Civil")
+                click(activity, "About / Data")
+                assertHasText(activity, "Dataset version: iloilo-jaro-wvsu-2026-11-06")
+                assertHasText(activity, "Verified route patterns: 4")
                 assertHasText(activity, "Recognition model: Not included in this M2 build.")
             }
         }

@@ -113,7 +113,7 @@ class MainActivity : Activity() {
 
     private fun updateCoverage() {
         coverage.text = if (catalog.patterns.any { it.active && it.verificationStatus == VerificationStatus.VERIFIED }) {
-            "Verified route coverage is bundled. Check each route’s source and verification date."
+            "Verified coverage: Jaro Plaza ↔ WVSU on Routes 3 and 10 only. Other routes and transfers are not covered."
         } else {
             "Verified route coverage is unavailable in this build. No route recommendations can be made."
         }
@@ -282,9 +282,10 @@ class MainActivity : Activity() {
         addBody("Dataset version: ${catalog.info.datasetVersion}")
         addBody("Verified route patterns: ${catalog.patterns.count { it.active && it.verificationStatus == VerificationStatus.VERIFIED }}")
         addBody("Recognition model: Not included in this M2 build.")
-        addBody("Route records have not been independently verified for live operation. Coverage is limited to the installed verified dataset.")
-        addBody("Manual planning does not request camera or network permission. Route geometry and ordered stop text are stored locally.")
-        addBody("Route reverification policy: pending route-data owner approval.")
+        addBody("Coverage is limited to the Jaro Plaza–WVSU corridor on Routes 3 and 10. The route maps show streets, not schedules or service frequency.")
+        addBody("The offline route diagram is schematic, not turn-by-turn navigation. Manual planning does not request camera or network permission.")
+        addBody("Sources: Iloilo City Planning route maps and LTFRB MC 2023-036; stop coordinates © OpenStreetMap contributors. Route direction was project-lead confirmed.")
+        addBody("Route-data policy: the project lead rechecks these sources at least every 90 days, before each data release, and when a route change is reported. A conflicting or unconfirmed pattern is marked unavailable until checked again.")
     }
 
     private fun chooseLocation(title: String, candidates: List<Location>, selected: (Location) -> Unit) {
