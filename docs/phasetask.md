@@ -327,3 +327,18 @@ The release APK contains the checked-in route bundle. Synthetic fixture markers 
 ### Current acceptance boundary
 
 M2-01–M2-17 are complete for this explicitly limited DSA prototype scope. The catalog does not cover all of either route or other Iloilo routes. Official map streets do not establish current operating conditions, schedules, service frequency, exact curbside boarding points, or temporary detours. An OEM lock-screen overlay prompt appeared on an earlier first-launch attempt; it was not granted, is not requested by ParaPo, and did not appear during the final fresh-install walkthrough.
+
+### M1 readiness update — 2026-11-06
+
+Only M1-02 is currently checked. M2 route-map approval does not authorize collecting camera samples for M1, and the app has no recognition model yet.
+
+| ID | Current evidence and next requirement |
+| --- | --- |
+| M1-01 | **OPEN.** The repository has no instructor acceptance against the actual rubric, confirmed deadline, team assignments, or staffing/training plan. Project lead must provide or record those before this item can pass. |
+| M1-02 | **PASSED.** Exact Tecno model/OS build, API 34 minimum, camera/storage/runtime constraints, and repeat USB access are recorded in the task row and linked device evidence. |
+| M1-03 | **OPEN.** No approved pilot protocol or collection permissions are recorded. Prepare the stationary readability procedure and obtain applicable permission before collecting samples. |
+| M1-04 | **OPEN.** No actual-phone sign readability observations, original-crop OCR checks, or useful-window timing evidence are recorded. Requires the approved pilot. |
+| M1-05–M1-07 | **OPEN.** No authorized pilot sample set, detector training/export, phone inference parity, or offline OCR evidence is recorded for YOLOv8n, a named SSD MobileNetV2 variant, or EfficientDet-Lite0. |
+| M1-08 | **OPEN.** Feasibility cannot be decided until M1-01–M1-07 evidence is available and the project lead records the operating envelope or a narrower supported claim. |
+
+The route maps support the M2 route catalog only; they do not establish that camera collection is permitted or that route signs can be read in time from the designated phone.
