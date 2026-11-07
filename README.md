@@ -1,12 +1,22 @@
 # ParaPo
 
-ParaPo is an Android prototype for checking whether one verified directional jeepney route can take a commuter directly between two selected locations. The M2 build provides an offline manual planner; it does not include sign recognition.
+ParaPo is a small Android school prototype for checking whether a verified jeepney route can take a commuter directly between two supported locations. The offline manual planner works in this build. A camera-scanner entry point is present, but live scanning is deliberately unavailable until the local detector export passes its PyTorch parity check; manual planning and route details remain available.
 
-## Current implementation
+## Current scope
 
-The single-module Kotlin app includes Home, Results, Route Details, Explore, and About / Data screens. It resolves curated names and aliases, reports ambiguous or unsupported locations, returns every eligible same-pattern direct journey, and shows a local route diagram with an ordered stop list. A Scan action explains that recognition is unavailable and retains the selected journey.
+- The bundled catalog covers the Jaro Plaza–WVSU corridor on Iloilo City Routes 3 and 10, in four explicitly mapped directions. This is not a full city route catalog or a service schedule. Directions are based on the supplied Iloilo City Planning maps and LTFRB MC 2023-036; stop coordinates are attributed to OpenStreetMap contributors. Source maps are in [M2 evidence](docs/evidence/m2/source-maps/README.md).
+- Results retain the selected journey when opening the scanner or route details. Explore opens neutral sign-identification context and has no journey compatibility result.
+- The experimental fine-tuned YOLOv8n export is local and ignored by Git. Its recorded test result is 0 correct sign detections out of 3, and ONNX/PyTorch parity failed. It is not selected or phone-ready. The app therefore reports scanning unavailable instead of using it to guide a commuter.
+- The M4 implementation contains CameraX frame handling, original-resolution crop/OCR, route and direction decisions, session/freshness checks, and manual fallback. Camera permission is optional at install time and is requested only by the scanner path when live scanning is enabled. The current build's parity gate prevents requesting the camera.
+- The app has no network permission. OCR and detector dependencies are bundled; no frame or OCR text is saved or logged. A user can explicitly share a versioned JSON summary containing only versions and aggregate counts/timing measurements.
 
-The bundled release catalog covers only the Jaro Plaza–WVSU corridor on Iloilo City Routes 3 and 10, in the mapped directions. The project lead approved the corridor and confirmed the Jaro Plaza direction on 2026-11-06 using the City Planning route maps and LTFRB MC 2023-036. The supplied maps are preserved in [M2 source maps](docs/evidence/m2/source-maps/README.md); coordinates are attributed to OpenStreetMap contributors. This is limited corridor coverage, not a full Iloilo route catalog. Test-only synthetic routes are under `app/src/test` and `app/src/androidTest`; they are not bundled into the release. The app requests neither camera nor network permission, and no recognition model is included.
+The detector is packaged only when the ignored local file exists. To prepare a local demo APK, copy the reviewed export into the asset path before building:
+
+```powershell
+Copy-Item datasets\m3-samples\runs\yolov8n-reviewed-20ep\weights\best.onnx app\src\main\assets\route-sign-yolov8n.onnx
+```
+
+Expected local model SHA-256: `183a212b84273fc58870bf4dfd10bb76f52cecabf9e0c7ac5b8f1d01563116d8`. The app displays this version/hash and the M3 failure in About / Data. Preprocessing is 320×320 RGB letterbox, FP32 input, NMS IoU 0.7, provisional score cutoff 0.25. Do not loosen parity tolerances to make the export pass. See [M3 results](docs/evidence/m3/results-2026-11-07.md) and the [M4 implementation evidence](docs/evidence/m4/implementation-2026-11-07.md).
 
 ## Toolchain
 
@@ -15,6 +25,7 @@ The bundled release catalog covers only the Jaro Plaza–WVSU corridor on Iloilo
 - Android Gradle Plugin 8.10.0
 - Kotlin Android plugin 2.2.10
 - Android SDK platform 36; minimum Android version API 34
+- CameraX 1.5.3, AndroidX Activity 1.13.0, ONNX Runtime Android 1.31.1, bundled ML Kit Latin text recognition 16.0.1
 
 Set `ANDROID_HOME` to the Android SDK directory and `ANDROID_SDK_ROOT` to the same value. For a standard PowerShell SDK installation:
 
@@ -23,39 +34,23 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 $env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
 ```
 
-The first Gradle run may download the pinned plugins and test libraries.
+## Build and checks
 
-## Build and test
-
-From the repository root, build the debug app, run JVM tests, and run instrumentation tests on a connected Android API 34+ emulator or phone:
+Run from the repository root:
 
 ```powershell
-.\gradlew.bat clean assembleDebug testDebugUnitTest connectedDebugAndroidTest
-```
-
-To build the release variant:
-
-```powershell
+.\gradlew.bat assembleDebug testDebugUnitTest
+.\gradlew.bat connectedDebugAndroidTest
 .\gradlew.bat assembleRelease
 ```
 
-The debug APK is `app/build/outputs/apk/debug/app-debug.apk`; the release APK is `app/build/outputs/apk/release/app-release-unsigned.apk`. Instrumentation tests use synthetic catalogs injected by the test application and cover manual navigation, selected-journey retention, permissions, and route-bundle validation/recovery.
+The debug APK is `app/build/outputs/apk/debug/app-debug.apk`; the unsigned release APK is `app/build/outputs/apk/release/app-release-unsigned.apk`. Instrumentation needs a connected Android API 34+ emulator or phone. On 2026-11-07, all 13 connected tests passed on the designated Tecno KJ8 (Android 14/API 34), including scanner fallback/Explore context and a synthetic-image model inference smoke test. This does not verify live sign recognition or the camera path; the model remains gated off. See the M4 evidence note for details.
 
-The planner compares directed `(patternId, sequence)` adjacency-list BFS against an independent ordered-list scan. The implementation notes and host/phone measurements are in [M2 implementation evidence](docs/evidence/m2/implementation-2026-11-06.md). Those synthetic timings do not replace target-phone measurements.
-
-To rebuild the checked-in route bundle after editing the reviewed route source, run the standard-library-only data packager:
+To rebuild the route bundle after editing its reviewed source, run:
 
 ```powershell
 python tools/build_route_bundle.py
 ```
-
-## Route data and offline behavior
-
-An authorized route bundle is a ZIP containing `manifest.json` and `routes.sqlite`. The store checks the manifest, SHA-256 checksum, SQLite integrity and foreign keys, schema version, record references, ordered stops, coordinates, geometry anchors, source provenance, and pattern verification before replacing the installed database. A rejected update leaves the last valid database available, including after restart.
-
-The versioned source data is [data/iloilo-jaro-wvsu.json](data/iloilo-jaro-wvsu.json); `tools/build_route_bundle.py` validates and packages it as `app/src/main/assets/routes.bundle`. The app rechecks the manifest, SHA-256 checksum, SQLite integrity and foreign keys, schema version, references, ordered stops, coordinates, geometry anchors, provenance, and verification state before installing a bundle. Rejected updates preserve the last valid catalog, including after restart.
-
-Project route-data policy: the project lead checks the cited Iloilo City / LTFRB sources at least every 90 days, before each data release, and whenever a route change is reported. Mark a conflicting or unconfirmed pattern unavailable until checked again. The local route diagram is schematic; it is not turn-by-turn navigation, a timetable, or a service-frequency guarantee.
 
 ## Project documents
 
@@ -64,6 +59,6 @@ Project route-data policy: the project lead checks the cited Iloilo City / LTFRB
 - [Original concept](docs/original-concept.md)
 - [Phase task tracker](docs/phasetask.md)
 
-## Limitations and next work
+## What remains
 
-This M2 build does not identify vehicles, use a camera, access a network map, infer reverse travel, support transfers, cover routes outside the Jaro Plaza–WVSU corridor, or establish service schedules. It contains two project-approved routes in four explicit directions. The Tecno KJ8 (Spark 20 Pro 5G) Android 14/API 34 was inspected; the route-enabled app was opened on the phone with Wi-Fi and mobile data disabled, and the results, details, and Scan fallback were exercised. The route source lists streets and landmarks; temporary detours or operator-specific boarding changes may not appear in it.
+Resolve and rerun the ONNX/PyTorch comparison on identical inputs without changing its recorded tolerances. If parity passes, enable live scanning and check it on the designated Tecno KJ8 (Spark 20 Pro 5G, Android 14/API 34): Plan → Results → Scan → Details → Manual; neutral scanning from Explore; permission denial/recovery; target loss; pause/resume; offline first launch; and capture-to-display timing. The Tecno is now ADB-connected, but those live-camera checks remain open because scanning is gated off. Wider route coverage, reverse-direction inference, transfers, schedules, network maps, and public release remain outside this prototype task.

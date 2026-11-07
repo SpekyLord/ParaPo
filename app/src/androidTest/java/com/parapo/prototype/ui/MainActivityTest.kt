@@ -23,6 +23,7 @@ import com.parapo.prototype.data.SourceRecord
 import com.parapo.prototype.data.StopOccurrence
 import com.parapo.prototype.data.VerificationStatus
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -35,7 +36,7 @@ class MainActivityTest {
         app.catalogLoader = { RouteCatalog.EMPTY }
     }
 
-    @Test fun manualResultDetailsAndScannerFallbackRetainTheChosenJourney() {
+    @Test fun manualResultDetailsAndScannerRetainTheChosenJourney() {
         app.catalogLoader = { uiFixture() }
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
@@ -46,9 +47,12 @@ class MainActivityTest {
                 assertHasText(activity, "Board at A")
                 assertHasText(activity, "Get off at C")
                 click(activity, "Scan")
-                assertHasText(activity, "Camera recognition is not included in this M2 build. Your selected journey is saved.")
+                assertHasText(activity, "Scan a route sign")
+                assertHasText(activity, "Detector unavailable: export parity failed or the model asset is missing/corrupt. Manual planning is still available.")
+                assertHasText(activity, "Checking Synthetic Route · Northbound")
                 assertHasText(activity, "Board at A; get off at C.")
-                click(activity, "View details")
+                click(activity, "Manual planning")
+                click(activity, "Details")
                 assertHasText(activity, "Synthetic Route")
                 assertHasText(activity, "Direction: Northbound. Test headsign")
                 assertHasText(activity, "Ordered stops")
@@ -70,7 +74,7 @@ class MainActivityTest {
                 assertHasText(activity, "No verified routes are available to browse.")
                 click(activity, "About / Data")
                 assertHasText(activity, "Dataset version: none")
-                assertHasText(activity, "Recognition model: Not included in this M2 build.")
+                assertHasText(activity, "Recognition model: YOLOv8n fine-tuned M3 demo-v3; provisional")
             }
         }
     }
@@ -104,7 +108,13 @@ class MainActivityTest {
                 click(activity, "About / Data")
                 assertHasText(activity, "Dataset version: iloilo-jaro-wvsu-2026-11-06")
                 assertHasText(activity, "Verified route patterns: 4")
-                assertHasText(activity, "Recognition model: Not included in this M2 build.")
+                assertHasText(activity, "Recognition model: YOLOv8n fine-tuned M3 demo-v3; provisional")
+                assertHasText(activity, "Model check: 0/3 M3 test signs detected; ONNX export parity failed. Phone smoke inference ran on a synthetic image; sign accuracy is unverified.")
+                assertHasText(activity, "Model SHA-256: 183a212b84273fc58870bf4dfd10bb76f52cecabf9e0c7ac5b8f1d01563116d8")
+                assertHasText(activity, "Inference runtime: ONNX Runtime Android 1.31.1")
+                assertHasText(activity, "Offline OCR: ML Kit bundled Latin 16.0.1")
+                assertHasText(activity, "Scanner settings: scanner-v1; 2 observations / 1 s window; 1 s result freshness (provisional).")
+                assertHasText(activity, "Live scanning is unavailable until export parity is resolved. Manual planning remains available.")
             }
         }
     }
@@ -122,14 +132,48 @@ class MainActivityTest {
         }
     }
 
-    @Test fun appDoesNotRequestCameraOrNetworkPermission() {
+    @Test fun appRequestsCameraButNotNetworkPermission() {
         val packageInfo = app.packageManager.getPackageInfo(
             app.packageName,
             PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong()),
         )
         val permissions = packageInfo.requestedPermissions.orEmpty().toSet()
-        assertTrue(android.Manifest.permission.CAMERA !in permissions)
+        assertTrue(android.Manifest.permission.CAMERA in permissions)
         assertTrue(android.Manifest.permission.INTERNET !in permissions)
+        assertTrue("android.permission.ACCESS_NETWORK_STATE" !in permissions)
+    }
+
+    @Test fun exploreScannerStartsWithNeutralContextEvenAfterPlanning() {
+        app.catalogLoader = { uiFixture() }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.findViewById<EditText>(R.id.home_origin).setText("A")
+                activity.findViewById<EditText>(R.id.home_destination).setText("C")
+                click(activity, "Find routes")
+                click(activity, "Explore")
+                click(activity, "Scan a sign")
+                assertHasText(activity, "Neutral route identification — any earlier journey selection is ignored for matching.")
+                assertHasText(activity, "Detector unavailable: export parity failed or the model asset is missing/corrupt. Manual planning is still available.")
+                assertHasText(activity, "Back to Explore")
+            }
+        }
+    }
+
+    @Test fun unavailableScannerKeepsManualFallbackWithoutRequestingCamera() {
+        app.catalogLoader = { uiFixture() }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val cameraPermissionBefore = activity.checkSelfPermission(android.Manifest.permission.CAMERA)
+                activity.findViewById<EditText>(R.id.home_origin).setText("A")
+                activity.findViewById<EditText>(R.id.home_destination).setText("C")
+                click(activity, "Find routes")
+                click(activity, "Scan")
+                assertHasText(activity, "Detector unavailable: export parity failed or the model asset is missing/corrupt. Manual planning is still available.")
+                assertHasText(activity, "Checking Synthetic Route · Northbound")
+                assertHasText(activity, "Manual planning")
+                assertEquals(cameraPermissionBefore, activity.checkSelfPermission(android.Manifest.permission.CAMERA))
+            }
+        }
     }
 
     private fun uiFixture(): RouteCatalog {
