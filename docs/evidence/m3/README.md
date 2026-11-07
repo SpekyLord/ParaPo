@@ -1,6 +1,6 @@
 # M3 research tooling and collection protocol
 
-This directory documents the tooling. No model outputs, model weights, or phone-recognition measurements have been produced for M3. Sixteen chat-supplied images are staged locally under ignored `datasets/m3-samples/`; 14 vehicle scenes have first-pass boxes/text in `manifest.jsonl`, and two poster graphics are excluded. The manifest is frozen at 10 train / 2 validation / 2 test, but two held-out images are far too few for a reliable comparison. The checked-in fixture is synthetic and must not be used to claim candidate performance.
+This directory documents the tooling and the local demo run. Sixteen user-supplied images are staged under ignored `datasets/m3-samples/`; 14 vehicle scenes are labeled, and two poster graphics are excluded. The v4 manifest freezes 10 train / 2 validation / 2 test. YOLOv8n and EasyOCR ran on the local computer, but SSD MobileNetV2, EfficientDet-Lite0, and phone inference did not. The test split has only two photos and has been previewed, so the measurements are exploratory. See [M3 demo results](results-2026-11-07.md). The checked-in synthetic fixture remains separate and cannot be used to claim candidate performance.
 
 ## Reproduce the tooling check
 
@@ -46,11 +46,11 @@ Validate records with `python tools/experiment.py validate-record --kind run --i
 
 Anyone can add images, label them, or run checks; no lead roles or formal approval forms are needed unless your course specifically requires them. For the images already supplied, a short source note and keeping them local is enough for this prototype. If you add more, mark unclear route/direction as unknown, avoid spending time on faces or plates, and keep images out of Git. Do not plan a public release.
 
-The image inventory is a first pass. Confirm route/sign boxes where useful; do not pretend unclear signs are labeled. For a small demo, put related or possibly duplicated photos in the same training group and use different new images for a basic held-out check. More images from unrelated web pictures do not automatically make a reliable comparison.
+The v4 image inventory and boxes were visually checked; boxes in images 03, 13, 15, and 16 were corrected. Route IDs not printed on a sign stay unknown, and unreadable text remains blank. More independent photos would be needed for a useful comparison.
 
 ## Evaluation gates and honest reporting
 
-`report --split test` requires a frozen manifest, a completed run record, and thresholds/decision rules tuned on validation only. That keeps test results out of tuning without adding a sign-off form. If you change the model or rules after seeing test results, treat that test set as used and get a fresh held-out set for a new comparison.
+`report --split test` requires a frozen manifest, a completed run record, and thresholds/decision rules set from validation. The two-photo test result here is exploratory because its predictions were previewed during the label review. Get a fresh held-out set before using results to choose a model.
 
 Example validation report command:
 
@@ -60,8 +60,20 @@ python tools/experiment.py report --manifest <manifest.jsonl> --split-record <fr
 
 The report emits detection precision/recall at the pinned score/IoU, AP50 and AP50–95, pattern/direction confusion with unknowns, OCR character error/exact code accuracy by crop source, condition/sign-size breakdowns, wrong-green and matching-recall counts with Wilson 95% intervals, abstention, coverage, late decisions, and latency summaries when supplied. It reports zero denominators as `not estimable`. Do not pool repeated frames as independent encounters. Missing crop or timing inputs are not measured; record them as unavailable rather than treating them as zero.
 
-There is no training/export adapter in this repository, and this tool does not install model runtimes or select a candidate. Resolve the M1 feasibility paths and exact SSD MobileNetV2 variant before configuring actual runs. Do not substitute another detector without the approved versioned experiment-plan change.
+`tools/run_yolo_demo.py` runs an existing YOLO checkpoint and EasyOCR on the frozen validation/test split; it does not train a model. Ultralytics, PyTorch, OpenCV, and EasyOCR are optional packages installed in a local virtual environment. There is no SSD MobileNetV2 or EfficientDet-Lite0 training/inference adapter yet, and no candidate has been selected.
 
-## Current state (2026-11-06)
+## Reproduce the real YOLO demo
 
-All M3 acceptance items remain open. Manifest, freeze/verify, metric, parity, and synthetic smoke tooling are implementation evidence only. A 14-image first-pass manifest now validates, freezes, and verifies locally; its labels need a quick correction pass, and its two-image validation/test splits are only a starter. The original image source details, exact SSD variant, feasible training/export path, pinned OCR/runtime, and actual candidate phone evidence are still missing. No candidate was run or selected. Anyone can handle the next steps; no formal role or sign-off is needed unless the course requires it.
+From PowerShell at the repository root, with the optional model packages installed in the local environment:
+
+```powershell
+$mlPy = Join-Path $env:LOCALAPPDATA 'ParaPo\m3-yolo-venv\Scripts\python.exe'
+& $mlPy tools/run_yolo_demo.py --manifest datasets/m3-samples/manifest.jsonl --split-record datasets/m3-samples/split-v4.json --checkpoint datasets/m3-samples/runs/yolov8n-reviewed-20ep/weights/best.pt --output-dir datasets/m3-samples/runs/demo-replay-v4 --device 0
+python tools/experiment.py validate-record --kind run --input datasets/m3-samples/runs/demo-v4/run-record.json
+```
+
+The run helper refuses to overwrite outputs. Choose a new output directory for each replay. Training and model weights are optional local artifacts and remain out of Git. The exact training arguments and dependency versions are recorded in `datasets/m3-samples/runs/demo-v4/run-config.json` and `run-record.json`.
+
+## Current state (2026-11-07)
+
+M3-01–04 are complete for this local starter set. M3-05–09 are partial: only YOLOv8n ran; at score 0.25 / IoU 0.5 it had zero true-positive detections, and ONNX export parity failed the configured tolerances. ADB currently lists one device offline, so there are no phone model measurements. M3-10 remains undecided; there is no winner. No Android source or scanner UI changed. Anyone can take the remaining tasks; no role assignments or formal sign-offs are needed for this class demo.

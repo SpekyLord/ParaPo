@@ -258,17 +258,26 @@ def detection_metrics(samples, predictions, score_threshold=0.5, iou_threshold=0
 def ocr_metrics(rows, source):
     chosen = [row for row in rows if row.get("crop_source") == source]
     edits = total_chars = exact = 0
+    route_code_rows = []
     for row in chosen:
         truth, predicted = row.get("truth_text"), row.get("predicted_text")
         if not isinstance(truth, str) or not isinstance(predicted, str):
             raise InvalidInput("OCR text fields must be strings")
         edits += levenshtein(truth, predicted)
         total_chars += len(truth)
-        exact += int(row.get("truth_route_code") == row.get("predicted_route_code"))
+        truth_code, predicted_code = row.get("truth_route_code"), row.get("predicted_route_code")
+        if truth_code is not None and not isinstance(truth_code, str):
+            raise InvalidInput("OCR route codes must be text or null")
+        if predicted_code is not None and not isinstance(predicted_code, str):
+            raise InvalidInput("OCR route codes must be text or null")
+        if isinstance(truth_code, str) and truth_code.strip() and truth_code.casefold() != "unknown":
+            route_code_rows.append((truth_code, predicted_code))
+    exact = sum(truth == predicted for truth, predicted in route_code_rows)
     return {
         "samples": len(chosen),
         "character_error_rate": edits / total_chars if total_chars else None,
-        "exact_route_code_accuracy": exact / len(chosen) if chosen else None,
+        "route_code_samples": len(route_code_rows),
+        "exact_route_code_accuracy": exact / len(route_code_rows) if route_code_rows else None,
     }
 
 
@@ -293,16 +302,26 @@ def route_metrics(samples, predictions, score_threshold=0.5):
                 used.add(index)
                 predicted = detections[index].get("pattern_id") or "UNKNOWN"
             expected = sign.get("pattern_id") or "UNKNOWN"
+            if expected.casefold() == "unknown":
+                expected = "UNKNOWN"
             matrix[f"{expected}=>{predicted}"] += 1
-            count += 1
-            correct += int(expected == predicted)
+            if expected != "UNKNOWN":
+                count += 1
+                correct += int(expected == predicted)
             expected_direction = sign.get("direction") or sample_rows[sample_id].get("direction") or "UNKNOWN"
             predicted_direction = (detections[index].get("direction") or "UNKNOWN") if index is not None and overlap >= 0.5 else "UNKNOWN"
+            if expected_direction.casefold() == "unknown":
+                expected_direction = "UNKNOWN"
+            if predicted_direction.casefold() == "unknown":
+                predicted_direction = "UNKNOWN"
             direction_matrix[f"{expected_direction}=>{predicted_direction}"] += 1
-            direction_count += 1
-            direction_correct += int(expected_direction == predicted_direction)
-    return {"signs": count, "exact_pattern_accuracy": correct / count if count else None,
+            if expected_direction != "UNKNOWN":
+                direction_count += 1
+                direction_correct += int(expected_direction == predicted_direction)
+    return {"signs": sum(len(row.get("signs", [])) for row in samples),
+            "pattern_evaluable_signs": count, "exact_pattern_accuracy": correct / count if count else None,
             "confusion": dict(sorted(matrix.items())),
+            "direction_evaluable_signs": direction_count,
             "exact_direction_accuracy": direction_correct / direction_count if direction_count else None,
             "direction_confusion": dict(sorted(direction_matrix.items()))}
 

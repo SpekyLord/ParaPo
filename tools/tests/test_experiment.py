@@ -62,6 +62,30 @@ class ExperimentTests(unittest.TestCase):
         none = experiment.encounter_metrics([{"encounter_id": "n", "eligible_matching": False, "green_pattern_ids": [], "definitive": False}])
         self.assertEqual("not estimable", none["wrong_green"]["fraction"])
 
+    def test_ocr_route_accuracy_skips_unlabeled_codes(self):
+        rows = [
+            {"crop_source": "ground_truth", "truth_text": "JARO", "predicted_text": "JARO",
+             "truth_route_code": None, "predicted_route_code": None},
+            {"crop_source": "ground_truth", "truth_text": "ROUTE 3", "predicted_text": "ROUTE 3",
+             "truth_route_code": "ILO-03", "predicted_route_code": None},
+        ]
+        metrics = experiment.ocr_metrics(rows, "ground_truth")
+        self.assertEqual(1, metrics["route_code_samples"])
+        self.assertEqual(0.0, metrics["exact_route_code_accuracy"])
+        self.assertIsNone(experiment.ocr_metrics(rows[:1], "ground_truth")["exact_route_code_accuracy"])
+
+    def test_route_accuracy_does_not_count_unknown_labels_as_correct(self):
+        samples = [{"sample_id": "s1", "direction": "unknown", "signs": [
+            {"box": [0, 0, 10, 10], "pattern_id": None, "direction": "unknown"}]}]
+        predictions = [{"sample_id": "s1", "detections": [
+            {"box": [0, 0, 10, 10], "score": 0.9, "pattern_id": None, "direction": None}]}]
+        metrics = experiment.route_metrics(samples, predictions)
+        self.assertEqual(1, metrics["signs"])
+        self.assertEqual(0, metrics["pattern_evaluable_signs"])
+        self.assertIsNone(metrics["exact_pattern_accuracy"])
+        self.assertEqual(0, metrics["direction_evaluable_signs"])
+        self.assertIsNone(metrics["exact_direction_accuracy"])
+
     def test_synthetic_smoke_report_is_explicitly_labeled(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:
             result = experiment.main(["smoke", "--fixture", str(FIXTURE)])
