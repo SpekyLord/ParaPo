@@ -1,6 +1,6 @@
 # M3 research tooling and collection protocol
 
-This directory documents the tooling and the local demo run. Sixteen user-supplied images are staged under ignored `datasets/m3-samples/`; 14 vehicle scenes are labeled, and two poster graphics are excluded. The v4 manifest freezes 10 train / 2 validation / 2 test. YOLOv8n and EasyOCR ran on the local computer, but SSD MobileNetV2, EfficientDet-Lite0, and phone inference did not. The test split has only two photos and has been previewed, so the measurements are exploratory. See [M3 demo results](results-2026-11-07.md). The checked-in synthetic fixture remains separate and cannot be used to claim candidate performance.
+This directory documents the tooling and local demo runs. Twenty user-supplied images are staged under ignored `datasets/m3-samples/`; 18 vehicle scenes are labeled, and two poster graphics are excluded. The original v4 manifest freezes 10 train / 2 validation / 2 test. A v5 manifest adds four photos to training and freezes 14 train / 2 validation / 2 test. YOLOv8n was retrained and evaluated on v5, but it still missed all three test signs; its ONNX export also failed host parity. The phone smoke test ran the existing provisional model on a synthetic image only, not the v5 export. SSD MobileNetV2 and EfficientDet-Lite0 still have no comparable runs. The test split has only two photos and has been previewed, so the measurements are exploratory. See [M3 demo results](results-2026-11-07.md). The checked-in synthetic fixture remains separate and cannot be used to claim candidate performance.
 
 ## Reproduce the tooling check
 
@@ -74,6 +74,23 @@ python tools/experiment.py validate-record --kind run --input datasets/m3-sample
 
 The run helper refuses to overwrite outputs. Choose a new output directory for each replay. Training and model weights are optional local artifacts and remain out of Git. The exact training arguments and dependency versions are recorded in `datasets/m3-samples/runs/demo-v4/run-config.json` and `run-record.json`.
 
+## Reproduce v5 retraining
+
+The preparation tool accepts PNG and JPEG samples. From PowerShell at the repository root, rebuild the frozen v5 training folders and repeat YOLO training with the pinned settings:
+
+```powershell
+python tools/prepare_detection_demo.py --manifest datasets/m3-samples/manifest-v5.jsonl --output datasets/m3-samples/yolo-v5-replay
+$mlPy = Join-Path $env:LOCALAPPDATA 'ParaPo\m3-yolo-venv\Scripts\python.exe'
+@'
+from pathlib import Path
+from ultralytics import YOLO
+root = Path.cwd()
+YOLO('yolov8n.pt').train(data=str(root / 'datasets/m3-samples/yolo-v5-replay/data.yaml'), epochs=20, patience=5, batch=2, imgsz=320, device=0, workers=0, seed=42, deterministic=True, pretrained=True, optimizer='auto', project=str(root / 'datasets/m3-samples/runs'), name='yolov8n-v5-replay', exist_ok=False, cls_remap=True, amp=True, verbose=False, plots=False)
+'@ | & $mlPy -
+```
+
+Only the 14 `train` examples are used for gradient updates; the two validation examples control early stopping. The two test examples are not read during training. Use a fresh output folder/name for each rerun. The original local v5 records remain in `datasets/m3-samples/runs/demo-v5/` and `yolov8n-v5-20ep/`.
+
 ## Current state (2026-11-07)
 
-M3-01–04 are complete for this local starter set. M3-05–09 are partial: only YOLOv8n ran; at score 0.25 / IoU 0.5 it had zero true-positive detections, and ONNX export parity failed the configured tolerances. ADB currently lists one device offline, so there are no phone model measurements. M3-10 remains undecided; there is no winner. No Android source or scanner UI changed. Anyone can take the remaining tasks; no role assignments or formal sign-offs are needed for this class demo.
+M3-01–04 are complete for the current local set. The v5 YOLO run used its 14 training images, selected a threshold from validation, and reported the two-photo test set separately. M3-05–09 remain partial: the two other detectors have no comparable runs, v5 missed all three test signs, and its ONNX export failed parity. The Tecno and emulator each passed the one-test bundled-model smoke check, but only on a synthetic image with the old provisional asset; no v5 phone measurement was made. M3-10 remains undecided; there is no winner. No Android source or scanner UI changed. Anyone can take the remaining tasks; no role assignments or formal sign-offs are needed for this class demo.

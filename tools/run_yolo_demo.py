@@ -16,7 +16,13 @@ def matched_truth_text(box, signs, iou_threshold=0.5):
     return best[1].get("visible_text", "") if best[1] is not None and best[0] >= iou_threshold else ""
 
 
+def valid_score_threshold(value):
+    return math.isfinite(value) and 0 <= value <= 1
+
+
 def run(args):
+    if not valid_score_threshold(args.score_threshold):
+        raise experiment.InvalidInput("score threshold must be between 0 and 1")
     rows = experiment.read_jsonl(args.manifest)
     header, samples = experiment.validate_manifest(rows)
     experiment.check_leakage(samples)
@@ -85,7 +91,7 @@ def run(args):
                              "truth_text": sign.get("visible_text", ""), "predicted_text": text,
                              "truth_route_code": sign.get("route_id"), "predicted_route_code": None})
         for detection in detection_by_id[sample["sample_id"]]:
-            if detection["score"] < 0.25:
+            if detection["score"] < args.score_threshold:
                 continue
             box = detection["box"]
             x1, y1, x2, y2 = (int(round(value)) for value in box)
@@ -116,6 +122,8 @@ def main(argv=None):
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--device", default="0", help="Ultralytics device; default is CUDA device 0")
+    parser.add_argument("--score-threshold", type=float, default=0.25,
+                        help="validation-selected cutoff for evaluation and detector OCR crops")
     args = parser.parse_args(argv)
     try:
         run(args)

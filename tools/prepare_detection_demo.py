@@ -10,15 +10,46 @@ from pathlib import Path
 import experiment
 
 
-def png_size(path):
+def image_size(path):
     try:
-        with Path(path).open("rb") as stream:
-            header = stream.read(24)
+        data = Path(path).read_bytes()
     except OSError as exc:
         raise experiment.InvalidInput("cannot read sample image") from exc
-    if len(header) != 24 or header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
-        raise experiment.InvalidInput("demo images must be PNG")
-    return struct.unpack(">II", header[16:24])
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        if len(data) < 24 or data[12:16] != b"IHDR":
+            raise experiment.InvalidInput("invalid PNG sample")
+        return struct.unpack(">II", data[16:24])
+    if not data.startswith(b"\xff\xd8"):
+        raise experiment.InvalidInput("demo images must be PNG or JPEG")
+    offset = 2
+    frame_markers = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+    while offset < len(data):
+        if data[offset] != 0xFF:
+            raise experiment.InvalidInput("invalid JPEG sample")
+        while offset < len(data) and data[offset] == 0xFF:
+            offset += 1
+        if offset >= len(data):
+            break
+        marker = data[offset]
+        offset += 1
+        if marker in {0x01, 0xD8, 0xD9, *range(0xD0, 0xD8)}:
+            continue
+        if offset + 2 > len(data):
+            break
+        length = struct.unpack(">H", data[offset:offset + 2])[0]
+        if length < 2 or offset + length > len(data):
+            break
+        if marker in frame_markers:
+            if length < 7:
+                break
+            height, width = struct.unpack(">HH", data[offset + 3:offset + 7])
+            if width and height:
+                return width, height
+            break
+        if marker == 0xDA:
+            break
+        offset += length
+    raise experiment.InvalidInput("cannot read sample image dimensions")
 
 
 def prepare(manifest_path, output_path):
@@ -38,7 +69,7 @@ def prepare(manifest_path, output_path):
         source = (root / image_ref).resolve()
         if not source.is_relative_to(root) or not source.is_file():
             raise experiment.InvalidInput("sample image reference is invalid")
-        width, height = png_size(source)
+        width, height = image_size(source)
         labels = []
         for sign in row.get("signs", []):
             x1, y1, x2, y2 = sign["box"]
@@ -54,7 +85,10 @@ def prepare(manifest_path, output_path):
     sample_map = []
     for index, row, source, labels in prepared:
         split = row["split"]
-        filename = f"sample-{index:04d}.png"
+        suffix = source.suffix.lower()
+        if suffix not in {".png", ".jpg", ".jpeg"}:
+            raise experiment.InvalidInput("demo images must use PNG or JPEG files")
+        filename = f"sample-{index:04d}{suffix}"
         shutil.copyfile(source, output_path / "images" / split / filename)
         (output_path / "labels" / split / f"sample-{index:04d}.txt").write_text("".join(f"{label}\n" for label in labels), encoding="utf-8")
         sample_map.append({"sample_id": row["sample_id"], "split": split, "image": filename})

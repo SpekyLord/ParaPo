@@ -10,7 +10,7 @@ The provisional rules are `scanner-v1`: two agreeing observations within 1,000 m
 
 The local asset `app/src/main/assets/route-sign-yolov8n.onnx` is ignored by Git and has SHA-256 `183a212b84273fc58870bf4dfd10bb76f52cecabf9e0c7ac5b8f1d01563116d8` (12,620,173 bytes). The release APK includes this asset. It is versioned in About as **YOLOv8n fine-tuned M3 demo-v3; provisional**. This is not a selected or phone-ready detector.
 
-The existing M3 evaluation found 0 correct detections for 3 labeled test signs. The saved PyTorch and ONNX Runtime CPU outputs cover the same four samples: image 03 has three detections in each output, and the other three images have none. Comparing the saved post-NMS rows shows a maximum score-ordered box coordinate difference of 18.144775 px and score difference of 0.12714114, against 1.5 px / 0.02 tolerances. This confirms the recorded mismatch but does not isolate its cause: raw model tensors and exact preprocessed input tensors were not retained, so the saved rows cannot show where the divergence entered. The local Python environment also lacks ONNX Runtime, so the export comparison was not rerun here. Tolerances were not changed. See [M3 results](../m3/results-2026-11-07.md).
+The v4 M3 evaluation found 0 correct detections for 3 labeled test signs. A new v5 training run also found 0/3 at the validation-selected 0.01 threshold. The v5 PyTorch and ONNX Runtime CPU runs used the same four validation/test photos and inference settings, but detection counts differed (PyTorch 159/97/158/178; ONNX 225/158/158/235). Tolerances were not changed. This remains a failed export parity check, and the new export was not installed on the phone. See [M3 results](../m3/results-2026-11-07.md).
 
 `LIVE_SCANNER_ENABLED` in `MainActivity` remains `false` until the same-input PyTorch/ONNX mismatch is understood and parity passes. The bundled pipeline still uses the recorded provisional settings: 320×320 RGB letterbox, FP32 input, NMS IoU 0.7, and 0.25 score cutoff. The app does not substitute generic COCO weights.
 
@@ -42,7 +42,8 @@ JDK 17, Gradle 8.11.1, Android Gradle Plugin 8.10.0, Kotlin 2.2.10, compile/targ
 | `.\gradlew.bat connectedDebugAndroidTest` — Tecno KJ8, Android 14/API 34, incremental 250108V1200, patch 2024-12-05 | **PASSED** — 13 tests, 0 failures/errors/skips. Included Results → Scan → Manual → Details journey retention, neutral Explore entry, About versions, unchanged camera permission on unavailable fallback, manifest permissions, and `bundledDetectorLoadsAndRunsOnDevice` on a synthetic gray image. |
 | `.\gradlew.bat assembleRelease` | **PASSED** — unsigned release APK built; release lint-vital passed. |
 | Merged debug/release manifest inspection | **PASSED** — CAMERA is present and camera hardware is optional; INTERNET and ACCESS_NETWORK_STATE are absent after dependency permissions were removed. |
-| Model package inspection | **PASSED** — local ONNX asset is present in the release APK at 12,620,173 bytes. |
+| Model package inspection | **PASSED** — existing local ONNX asset is present in the release APK at 12,620,173 bytes. |
+| Fresh checks on 2026-11-07 | **PARTIAL** — clean debug build/JVM tests passed; all 20 instrumentation tests passed on the Pixel emulator. Targeted synthetic-detector, manual-fallback, and neutral-Explore tests passed on Tecno. A concurrent full Tecno run stalled during a UI recreation test and was stopped, so it is not counted as a full pass. |
 
 The unsigned release APK SHA-256 is `55D7DE8B21055479F2C28FF9B4CEA4F555792B655ED3E335D044FA89BE54A0CD`; it is approximately 205 MB because it bundles the detector/OCR runtime and multiple native libraries. This local APK is not a phone-accepted release.
 
@@ -56,4 +57,4 @@ The Tecno KJ8 is now connected and the instrumentation results above are recorde
 4. Select one sign, move it out of view, pause/resume, and confirm old OCR/results cannot return.
 5. Measure capture-to-display time and inspect offline first launch, storage, logs, and network behavior.
 
-No M3 training/comparison, commit, push, or publication was performed.
+The M3 v5 retraining, test report, and host export-parity check are recorded in [M3 results](../m3/results-2026-11-07.md). The v5 export failed parity and was not installed in the app. No Android source change, commit, push, or publication was made.
