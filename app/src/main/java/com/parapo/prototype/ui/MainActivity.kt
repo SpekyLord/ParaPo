@@ -5,6 +5,10 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.content.res.ColorStateList
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -12,10 +16,13 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import android.widget.Button
+import android.widget.AutoCompleteTextView
+import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -28,6 +35,10 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.parapo.prototype.BuildConfig
 import com.parapo.prototype.ParapoApplication
 import com.parapo.prototype.R
@@ -77,6 +88,10 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     private var selected: JourneyMatch? = null
     private var explorePatternId: String? = null
     private var detailsPatternOverride: String? = null
+    private var detailsTextOnly = false
+    private var aboutReturnScreen = Screen.HOME
+    private var searchingOrigin = true
+    private var locationQuery = ""
     private var statusMessage: String? = null
     private var scannerNeutral = false
     private var scannerReturnScreen = Screen.RESULTS
@@ -102,7 +117,7 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     private var lastScannerDecision: ScannerDecision? = null
     private var userConfirmedRouteId: String? = null
     private var userConfirmedPatternId: String? = null
-    private var scanReturnLabel = "Manual planning"
+    private var scanReturnLabel = "See my routes"
     private var analyzedFrameCount = 0
     private var recognizedCropCount = 0
     private val decisionLatenciesMs = mutableListOf<Long>()
@@ -124,9 +139,36 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         catalog = (application as ParapoApplication).catalogLoader(this) ?: RouteCatalog.EMPTY
         resolver = LocationResolver(catalog)
         planner = JourneyPlanner(catalog)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_main)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.app_root)) { view, insets ->
+            val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime())
+            val padding = resources.getDimensionPixelSize(R.dimen.screen_padding)
+            view.setPadding(padding + safe.left, padding + safe.top, padding + safe.right, padding + safe.bottom)
+            insets
+        }
         content = findViewById(R.id.screen_content)
         coverage = findViewById(R.id.coverage_notice)
+        (coverage.parent as ViewGroup).removeView(coverage)
+        findViewById<Button>(R.id.app_info).apply {
+            text = getString(R.string.info)
+            isAllCaps = false
+            typeface = Typeface.create(resources.getFont(R.font.atkinson_hyperlegible_next), Typeface.BOLD)
+            setTextColor(getColor(R.color.blue))
+            background = RippleDrawable(ColorStateList.valueOf(0x443F6FAA), rounded(R.color.card_white, R.color.blue, 14), null)
+            contentDescription = "About ParaPo and route data"
+            setOnClickListener { aboutReturnScreen = if (screen == Screen.EXPLORE) Screen.EXPLORE else Screen.HOME; go(Screen.ABOUT) }
+        }
+        findViewById<Button>(R.id.app_back).apply {
+            typeface = Typeface.create(resources.getFont(R.font.atkinson_hyperlegible_next), Typeface.BOLD)
+            setTextColor(getColor(R.color.blue))
+            background = RippleDrawable(ColorStateList.valueOf(0x443F6FAA), rounded(R.color.card_white, R.color.blue, 14), null)
+            setOnClickListener { handleBackNavigation() }
+        }
         originText = savedInstanceState?.getString(KEY_ORIGIN_TEXT).orEmpty()
         destinationText = savedInstanceState?.getString(KEY_DESTINATION_TEXT).orEmpty()
         val originId = savedInstanceState?.getString(KEY_ORIGIN_ID)
@@ -146,19 +188,28 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
             if (board != null && alight != null && pattern != null) JourneyMatch(pattern.routeId, pattern.id, board, alight) else null
         }
         screen = savedInstanceState?.getString(KEY_SCREEN)?.let { runCatching { Screen.valueOf(it) }.getOrNull() } ?: Screen.HOME
+        explorePatternId = savedInstanceState?.getString(KEY_EXPLORE_PATTERN)
+        detailsPatternOverride = savedInstanceState?.getString(KEY_DETAILS_PATTERN)
+        detailsTextOnly = savedInstanceState?.getBoolean(KEY_DETAILS_TEXT_ONLY) ?: false
+        searchingOrigin = savedInstanceState?.getBoolean(KEY_SEARCH_ORIGIN) ?: true
+        locationQuery = savedInstanceState?.getString(KEY_LOCATION_QUERY).orEmpty()
+        aboutReturnScreen = savedInstanceState?.getString(KEY_ABOUT_RETURN)?.let {
+            runCatching { Screen.valueOf(it) }.getOrNull()
+        } ?: Screen.HOME
         scannerNeutral = savedInstanceState?.getBoolean(KEY_SCANNER_NEUTRAL) ?: false
         scannerReturnScreen = savedInstanceState?.getString(KEY_SCANNER_RETURN)?.let {
             runCatching { Screen.valueOf(it) }.getOrNull()
         } ?: Screen.RESULTS
+        scanReturnLabel = scannerReturnLabel(scannerNeutral, scannerReturnScreen)
         scannerContextKey = contextKey()
         scannerSessionId = temporalTracker.beginSession(scannerContextKey)
         updateCoverage()
         render()
         findViewById<View>(R.id.navigation).also { nav ->
-            addNavButton(nav as LinearLayout, "Home") { go(Screen.HOME) }
-            addNavButton(nav, "Explore") { go(Screen.EXPLORE) }
-            addNavButton(nav, "About / Data") { go(Screen.ABOUT) }
+            addNavButton(nav as LinearLayout, getString(R.string.nav_home)) { go(Screen.HOME) }
+            addNavButton(nav, getString(R.string.nav_explore)) { go(Screen.EXPLORE) }
         }
+        updateNavigation()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -167,6 +218,12 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         outState.putString(KEY_ORIGIN_ID, origin?.id)
         outState.putString(KEY_DESTINATION_ID, destination?.id)
         outState.putString(KEY_SCREEN, screen.name)
+        outState.putString(KEY_EXPLORE_PATTERN, explorePatternId)
+        outState.putString(KEY_DETAILS_PATTERN, detailsPatternOverride)
+        outState.putBoolean(KEY_DETAILS_TEXT_ONLY, detailsTextOnly)
+        outState.putBoolean(KEY_SEARCH_ORIGIN, searchingOrigin)
+        outState.putString(KEY_LOCATION_QUERY, locationQuery)
+        outState.putString(KEY_ABOUT_RETURN, aboutReturnScreen.name)
         outState.putBoolean(KEY_SCANNER_NEUTRAL, scannerNeutral)
         outState.putString(KEY_SCANNER_RETURN, scannerReturnScreen.name)
         selected?.let {
@@ -205,16 +262,20 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
 
     private fun handleBackNavigation() {
         when (screen) {
-            Screen.DETAILS -> go(if (selected != null) Screen.RESULTS else Screen.EXPLORE)
+            Screen.DETAILS -> go(detailsBackScreen())
             Screen.SCANNER -> go(scannerReturnScreen)
-            Screen.RESULTS, Screen.EXPLORE, Screen.ABOUT -> go(Screen.HOME)
+            Screen.ABOUT -> go(aboutReturnScreen)
+            Screen.RESULTS, Screen.NO_ROUTE, Screen.SEARCH, Screen.EXPLORE -> go(Screen.HOME)
             Screen.HOME -> finish()
         }
     }
 
     private fun updateCoverage() {
-        coverage.text = if (catalog.patterns.any { it.active && it.verificationStatus == VerificationStatus.VERIFIED }) {
+        val count = catalog.patterns.count { it.active && it.verificationStatus == VerificationStatus.VERIFIED }
+        coverage.text = if (count > 0 && catalog.info.datasetVersion.startsWith("iloilo-jaro-wvsu-")) {
             "Verified coverage: Jaro Plaza ↔ WVSU on Routes 3 and 10 only. Other routes and transfers are not covered."
+        } else if (count > 0) {
+            "Verified coverage: $count supported route patterns. Other routes and transfers are not covered."
         } else {
             "Verified route coverage is unavailable in this build. No route recommendations can be made."
         }
@@ -222,9 +283,15 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
 
     private fun render() {
         content.removeAllViews()
+        coverage.visibility = if (screen == Screen.HOME) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.app_back).visibility = if (screen == Screen.HOME || screen == Screen.EXPLORE) View.GONE else View.VISIBLE
+        findViewById<View>(R.id.app_info).visibility = if (screen == Screen.HOME || screen == Screen.EXPLORE) View.VISIBLE else View.GONE
+        updateNavigation()
         when (screen) {
             Screen.HOME -> renderHome()
             Screen.RESULTS -> renderResults()
+            Screen.SEARCH -> renderLocationSearch()
+            Screen.NO_ROUTE -> renderNoRoute()
             Screen.DETAILS -> renderDetails()
             Screen.EXPLORE -> renderExplore()
             Screen.ABOUT -> renderAbout()
@@ -232,14 +299,63 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         }
     }
 
+    private fun openLocationSearch(originField: Boolean) {
+        searchingOrigin = originField
+        locationQuery = if (originField) originText else destinationText
+        go(Screen.SEARCH)
+    }
+
+    private fun renderLocationSearch() {
+        addHeading("Choose a place")
+        addBody(if (searchingOrigin) "Search for your starting point." else "Search for your destination.")
+        val search = editField("Search places", locationQuery, R.id.location_search) { query ->
+            locationQuery = query
+            showLocationMatches(query)
+        }
+        add(search)
+        showLocationMatches(locationQuery)
+        search.requestFocus()
+        search.post { if (screen == Screen.SEARCH) (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(search, InputMethodManager.SHOW_IMPLICIT) }
+    }
+
+    private fun showLocationMatches(query: String) {
+        content.findViewWithTag<View>(LOCATION_LIST_TAG)?.let(content::removeView)
+        val list = verticalContainer().apply { tag = LOCATION_LIST_TAG }
+        val needle = query.trim().lowercase(Locale.ROOT)
+        val matches = catalog.locations.filter { location ->
+            needle.isEmpty() || (listOf(location.name) + location.aliases).any { it.lowercase(Locale.ROOT).contains(needle) }
+        }.sortedBy { it.name }
+        if (matches.isEmpty()) list.addView(label("No matching place. Try another name."))
+        matches.forEach { location ->
+            list.addView(secondaryButton(location.name) {
+                if (searchingOrigin) { originText = location.name; origin = location }
+                else { destinationText = location.name; destination = location }
+                selected = null
+                temporalTracker.invalidate()
+                go(Screen.HOME)
+            })
+        }
+        content.addView(list)
+    }
+
     private fun renderHome() {
-        addHeading("Plan a journey")
-        val originField = editField("Origin", originText, R.id.home_origin) { originText = it }
-        val destinationField = editField("Destination", destinationText, R.id.home_destination) { destinationText = it }
-        add(originField)
-        add(destinationField)
-        addButton("Find routes") { findRoutes() }
-        addButton("Explore routes") { go(Screen.EXPLORE) }
+        addHeading(getString(R.string.plan_heading))
+        addBody(getString(R.string.plan_help))
+        val badge = label("COVERAGE").apply {
+            textSize = 12f
+            typeface = Typeface.create(typeface, Typeface.BOLD)
+            background = rounded(R.color.coverage_surface, R.color.coverage_surface, 8)
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+        }
+        content.addView(badge, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        add(coverage)
+        addLocationField(getString(R.string.starting_point), "Origin", originText, R.id.home_origin) {
+            if (originText != it) { originText = it; selected = null; temporalTracker.invalidate() }
+        }
+        addLocationField(getString(R.string.destination), getString(R.string.destination), destinationText, R.id.home_destination) {
+            if (destinationText != it) { destinationText = it; selected = null; temporalTracker.invalidate() }
+        }
+        addButton(getString(R.string.find_route)) { findRoutes() }
         statusMessage?.let { addBody(it) }
     }
 
@@ -267,54 +383,87 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         if (from.id == to.id) return showStatus("Your origin and destination are the same. No ride is needed.")
         results = planner.findDirectJourneys(from.id, to.id)
         selected = null
-        if (results.isEmpty()) return showStatus("No direct route found in supported coverage. Transfers and routes outside coverage are not evaluated.")
+        if (results.isEmpty()) { statusMessage = null; go(Screen.NO_ROUTE); return }
         statusMessage = null
         go(Screen.RESULTS)
     }
 
     private fun renderResults() {
-        addHeading("Direct routes")
+        addHeading("Your route")
         addBody("${origin?.name.orEmpty()} → ${destination?.name.orEmpty()}")
         results.forEach { match ->
             val pattern = catalog.patterns.first { it.id == match.patternId }
             val route = catalog.routes.first { it.id == match.routeId }
+            val wrapper = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                background = rounded(R.color.card_white, R.color.card_border, 16)
+                clipToOutline = true
+            }
+            wrapper.addView(View(this).apply { setBackgroundColor(getColor(R.color.marigold)) }, LinearLayout.LayoutParams(dp(7), ViewGroup.LayoutParams.MATCH_PARENT))
             val card = verticalContainer()
-            card.addView(label("${route.name} · ${pattern.direction}"))
+            card.setPadding(dp(14), dp(12), dp(14), dp(12))
+            val routeHeading = Regex("^Route\\s+\\d+", RegexOption.IGNORE_CASE).find(route.name)?.value ?: route.name
+            card.addView(label(routeHeading).apply {
+                typeface = resources.getFont(R.font.barlow_condensed_bold)
+                textSize = 26f
+            })
+            card.addView(label(pattern.direction).apply {
+                typeface = Typeface.create(typeface, Typeface.BOLD)
+                setTextColor(getColor(R.color.blue))
+            })
+            if (routeHeading != route.name) card.addView(label(route.name).apply { textSize = 14f })
             card.addView(label("Board at ${locationName(match.boarding.locationId)}"))
             card.addView(label("Get off at ${locationName(match.alighting.locationId)}"))
             card.addView(label("Verified ${pattern.verificationDate}"))
-            card.addView(button("Details") { selected = match; detailsPatternOverride = null; go(Screen.DETAILS) })
-            card.addView(button("Scan") { selected = match; openScanner(neutral = false, returnTo = Screen.RESULTS) })
-            add(card)
+            val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            actions.addView(secondaryButton("See stops") { selected = match; detailsPatternOverride = null; detailsTextOnly = false; go(Screen.DETAILS) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
+            actions.addView(button("Scan sign") { selected = match; openScanner(neutral = false, returnTo = Screen.RESULTS) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            card.addView(actions)
+            wrapper.addView(card, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            add(wrapper)
         }
         statusMessage?.let { addBody(it) }
         addButton("Back to plan") { go(Screen.HOME) }
     }
 
+    private fun renderNoRoute() {
+        addHeading("No direct route found")
+        addBody("No direct route found in supported coverage. Transfers and routes outside coverage are not evaluated.")
+        addButton("Change a place") { go(Screen.HOME) }
+        addButton("Explore routes") { go(Screen.EXPLORE) }
+    }
+
     private fun renderDetails() {
-        val match = selected
+        val match = if (detailsPatternOverride != null && scannerNeutral) null else selected
         val patternId = detailsPatternOverride ?: match?.patternId ?: explorePatternId
         val pattern = catalog.patterns.firstOrNull { it.id == patternId }
         if (pattern == null) {
             addHeading("Route details")
             addBody("No verified directional route details are available in this build.")
-            addButton("Back") { go(if (selected != null) Screen.RESULTS else Screen.EXPLORE) }
+            addButton("Back") { go(detailsBackScreen()) }
             return
         }
         val route = catalog.routes.firstOrNull { it.id == pattern.routeId }
-        addHeading(route?.name ?: "Route details")
+        addHeading("Stops and direction")
+        route?.let { addBody(it.name) }
         addBody("Direction: ${pattern.direction}. ${pattern.branchHeadsign}")
         val pathPoints = catalog.geometry.filter { it.patternId == pattern.id }.sortedBy(GeometryPoint::sequence)
-        if (pathPoints.size >= 2) {
+        if (pathPoints.size >= 2 && !detailsTextOnly) {
             val diagram = RouteDiagramView(this).apply {
                 points = pathPoints
+                boardingSequence = match?.boarding?.sequence
+                alightingSequence = match?.alighting?.sequence
+                background = rounded(R.color.card_white, R.color.card_border, 16)
                 contentDescription = "Directional route diagram. The ordered stop list below gives the route direction and selected stops."
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 minimumHeight = dp(160)
             }
             add(diagram)
-        } else {
+            addButton("See stops without a map") { detailsTextOnly = true; render() }
+        } else if (pathPoints.size < 2) {
             addBody("Local route geometry is unavailable; use the ordered stop list below.")
+        } else {
+            addButton("Show route diagram") { detailsTextOnly = false; render() }
         }
         addHeading("Ordered stops")
         catalog.occurrences.filter { it.patternId == pattern.id }.sortedBy(StopOccurrence::sequence).forEachIndexed { index, stop ->
@@ -323,23 +472,30 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
                 match?.alighting?.sequence -> " · Get off here"
                 else -> ""
             }
-            addBody("${index + 1}. ${locationName(stop.locationId)}$markers")
+            add(label("${index + 1}. ${locationName(stop.locationId)}$markers").apply {
+                background = rounded(R.color.card_white, R.color.card_border, 12)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+            })
         }
         addBody("Source: ${catalog.sources.firstOrNull { it.id == pattern.sourceRef }?.description ?: "Unavailable"}")
         addBody("Verified: ${pattern.verificationDate}")
         addButton("Scan a sign") {
-            openScanner(neutral = selected == null, returnTo = if (selected == null) Screen.EXPLORE else Screen.DETAILS)
+            openScanner(neutral = match == null, returnTo = if (match == null) Screen.EXPLORE else Screen.DETAILS)
         }
-        addButton("Back") { go(if (selected != null) Screen.RESULTS else Screen.EXPLORE) }
+        addButton("Back") { go(detailsBackScreen()) }
     }
+
+    private fun detailsBackScreen(): Screen =
+        if (selected == null || (detailsPatternOverride != null && scannerNeutral)) Screen.EXPLORE else Screen.RESULTS
 
     private fun renderExplore() {
         addHeading("Explore routes")
-        addButton("Scan a sign") { openScanner(neutral = true, returnTo = Screen.EXPLORE) }
+        addBody("Find a route or scan a sign without planning a trip.")
         val search = editField("Search routes", "", R.id.explore_search) { query ->
             showExploreMatches(query)
         }
         add(search)
+        addButton("Scan a sign") { openScanner(neutral = true, returnTo = Screen.EXPLORE) }
         showExploreMatches(search.text.toString())
     }
 
@@ -358,40 +514,65 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         if (matches.isEmpty()) list.addView(label("No verified routes are available to browse."))
         matches.forEach { pattern ->
             val route = catalog.routes.first { it.id == pattern.routeId }
-            list.addView(label("${route.name} · ${pattern.direction}"))
-            list.addView(button("Open ${route.name} details") { selected = null; detailsPatternOverride = null; explorePatternId = pattern.id; go(Screen.DETAILS) })
+            val card = verticalContainer().apply { background = rounded(R.color.card_white, R.color.card_border, 16) }
+            card.addView(label("${route.name} · ${pattern.direction}"))
+            card.addView(secondaryButton("See route stops") { selected = null; detailsPatternOverride = null; detailsTextOnly = false; explorePatternId = pattern.id; go(Screen.DETAILS) }.apply {
+                contentDescription = "See stops for ${route.name}, ${pattern.direction}"
+            })
+            list.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) })
         }
         content.addView(list)
     }
 
     private fun renderAbout() {
-        addHeading("About / Data")
-        addBody("App version: ${BuildConfig.VERSION_NAME}")
-        addBody("Dataset version: ${catalog.info.datasetVersion}")
-        addBody("Verified route patterns: ${catalog.patterns.count { it.active && it.verificationStatus == VerificationStatus.VERIFIED }}")
+        addHeading("About ParaPo")
         val modelAvailable = modelAssetAvailable()
-        addBody("Recognition model: ${if (modelAvailable) ScannerPipeline.MODEL_VERSION else "Unavailable — local model asset missing"}")
-        addBody("Model check: 0/3 M3 test signs detected; ONNX export parity failed. Phone smoke inference ran on a synthetic image; sign accuracy is unverified.")
-        addBody("Live scanning is unavailable until export parity is resolved. Manual planning remains available.")
-        addBody("Model SHA-256: ${if (modelAvailable) EXPECTED_MODEL_HASH else "not available"}")
-        addBody("Inference runtime: ${ScannerPipeline.RUNTIME_VERSION}")
-        addBody("Offline OCR: ${ScannerPipeline.OCR_VERSION}")
-        addBody("Scanner settings: ${ScannerSettings().version}; 2 observations / 1 s window; 1 s result freshness (provisional).")
-        addBody("Coverage is limited to the Jaro Plaza–WVSU corridor on Routes 3 and 10. The route maps show streets, not schedules or service frequency.")
-        addBody("The offline route diagram is schematic, not turn-by-turn navigation. Camera access is requested only when scanning. Frames and OCR stay in memory.")
-        addBody("Sources: Iloilo City Planning route maps and LTFRB MC 2023-036; stop coordinates © OpenStreetMap contributors. See the route data for direction provenance.")
-        addBody("Route data should be rechecked every 90 days, before a data release, and when a route change is reported. Mark a conflicting or unconfirmed pattern unavailable until checked again.")
+        addAboutSection("Coverage", listOf(
+            "Coverage is limited to the Jaro Plaza–WVSU corridor on Routes 3 and 10. The route maps show streets, not schedules or service frequency.",
+            "Verified route patterns: ${catalog.patterns.count { it.active && it.verificationStatus == VerificationStatus.VERIFIED }}",
+            "The offline route diagram is schematic, not turn-by-turn navigation. Camera access is requested only when scanning. Frames and OCR stay in memory.",
+        ))
+        addAboutSection("Route data", listOf(
+            "Dataset version: ${catalog.info.datasetVersion}",
+            "Sources: Iloilo City Planning route maps and LTFRB MC 2023-036; stop coordinates © OpenStreetMap contributors. See the route data for direction provenance.",
+            "Route data should be rechecked every 90 days, before a data release, and when a route change is reported. Mark a conflicting or unconfirmed pattern unavailable until checked again.",
+        ))
+        addAboutSection("App and scanner", listOf(
+            "App version: ${BuildConfig.VERSION_NAME}",
+            "Live scanning is unavailable until export parity is resolved. Manual planning remains available.",
+            "Recognition model: ${if (modelAvailable) ScannerPipeline.MODEL_VERSION else "Unavailable — local model asset missing"}",
+            "Model check: 0/3 M3 test signs detected; ONNX export parity failed. Phone smoke inference ran on a synthetic image; sign accuracy is unverified.",
+            "Model SHA-256: ${if (modelAvailable) EXPECTED_MODEL_HASH else "not available"}",
+            "Inference runtime: ${ScannerPipeline.RUNTIME_VERSION}",
+            "Offline OCR: ${ScannerPipeline.OCR_VERSION}",
+            "Scanner settings: ${ScannerSettings().version}; 2 observations / 1 s window; 1 s result freshness (provisional).",
+        ))
         addButton("Share evaluation summary") { shareEvaluationSummary() }
     }
 
+    private fun addAboutSection(title: String, lines: List<String>) {
+        val card = verticalContainer().apply {
+            background = rounded(R.color.card_white, R.color.card_border, 14)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+        }
+        card.addView(label(title).apply {
+            textSize = 14f
+            typeface = Typeface.create(typeface, Typeface.BOLD)
+            setTextColor(getColor(R.color.blue))
+        })
+        lines.forEach { card.addView(label(it)) }
+        add(card)
+    }
+
     private fun renderScanner() {
-        addHeading("Scan a route sign")
-        addBody("Scan while stationary at a verified boarding area. Aim at one sign and select its outline.")
-        if (scannerNeutral) addBody("Neutral route identification — any earlier journey selection is ignored for matching.")
+        addHeading(if (LIVE_SCANNER_ENABLED) "Scan a route sign" else "Scanner unavailable")
+        if (LIVE_SCANNER_ENABLED) addBody("Scan while stationary at a verified boarding area. Aim at one sign and select its outline.")
+        else addBody("You can still browse routes and stops without the camera.")
+        if (scannerNeutral) addBody("No trip is selected. Browse routes to see their stops.")
         else selected?.let { match ->
             val route = catalog.routes.firstOrNull { it.id == match.routeId }
             val pattern = catalog.patterns.firstOrNull { it.id == match.patternId }
-            addBody("Checking ${route?.name.orEmpty()} · ${pattern?.direction.orEmpty()}")
+            addBody("${if (LIVE_SCANNER_ENABLED) "Checking" else "Your route:"} ${route?.name.orEmpty()} · ${pattern?.direction.orEmpty()}")
             addBody("Board at ${locationName(match.boarding.locationId)}; get off at ${locationName(match.alighting.locationId)}.")
         }
         scannerStatus = label("Camera scanner starting…")
@@ -499,7 +680,7 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         if (screen == Screen.SCANNER) stopScannerResources()
         scannerNeutral = neutral
         scannerReturnScreen = returnTo
-        scanReturnLabel = if (neutral) "Back to Explore" else "Manual planning"
+        scanReturnLabel = scannerReturnLabel(neutral, returnTo)
         scannerPermissionDenied = false
         scannerUnavailableReason = null
         scannerBoxes = emptyList()
@@ -517,6 +698,9 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
             startScannerCamera()
         } else requestScannerPermission()
     }
+
+    private fun scannerReturnLabel(neutral: Boolean, returnTo: Screen): String =
+        when { neutral -> "Back to Explore"; returnTo == Screen.DETAILS -> "Back to stops"; else -> "See my routes" }
 
     private fun requestScannerPermission() {
         if (scannerPermissionInFlight) return
@@ -657,7 +841,12 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
             status.text = message
             status.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_ANNOUNCEMENT)
         }
-        status.setTextColor(color)
+        val isMatch = color == getColor(R.color.outcome_green)
+        val isMismatch = color == getColor(R.color.outcome_red)
+        val surface = when { isMatch -> R.color.match_surface; isMismatch -> R.color.mismatch_surface; else -> R.color.neutral_surface }
+        status.background = rounded(surface, surface, 14)
+        status.setPadding(dp(14), dp(14), dp(14), dp(14))
+        status.setTextColor(if (isMatch || isMismatch) color else getColor(R.color.ink))
     }
 
     override fun onModelReady(modelHash: String) {
@@ -771,8 +960,8 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     }
 
     private fun decisionColor(kind: DecisionKind): Int = when (kind) {
-        DecisionKind.MATCH -> Color.rgb(0, 115, 45)
-        DecisionKind.NO_MATCH -> Color.rgb(180, 35, 35)
+        DecisionKind.MATCH -> getColor(R.color.outcome_green)
+        DecisionKind.NO_MATCH -> getColor(R.color.outcome_red)
         DecisionKind.IDENTIFIED -> Color.DKGRAY
         else -> Color.GRAY
     }
@@ -807,18 +996,33 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     }
 
     private fun go(next: Screen) {
+        if (screen != next) {
+            currentFocus?.let { focused ->
+                (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(focused.windowToken, 0)
+                focused.clearFocus()
+            }
+        }
         if (screen == Screen.SCANNER && next != Screen.SCANNER) stopScannerResources()
         screen = next
         render()
     }
 
-    private fun editField(hintText: String, value: String, id: Int, onChange: (String) -> Unit): EditText = EditText(this).apply {
+    private fun editField(hintText: String, value: String, id: Int, onChange: (String) -> Unit): EditText = AutoCompleteTextView(this).apply {
         this.id = id
         hint = hintText
         setText(value)
         textSize = 16f
         minHeight = dp(56)
+        typeface = resources.getFont(R.font.atkinson_hyperlegible_next)
+        setTextColor(getColor(R.color.ink))
+        background = rounded(R.color.card_white, R.color.card_border, 12)
+        setPadding(dp(14), dp(8), dp(14), dp(8))
         contentDescription = hintText
+        if (id == R.id.home_origin || id == R.id.home_destination) {
+            val choices = catalog.locations.flatMap { listOf(it.name) + it.aliases }.distinct().sorted()
+            setAdapter(ArrayAdapter(this@MainActivity, android.R.layout.simple_dropdown_item_1line, choices))
+            threshold = 1
+        }
         addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { onChange(s?.toString().orEmpty()) }
@@ -826,31 +1030,97 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         })
     }
 
+    private fun addLocationField(title: String, hint: String, value: String, id: Int, onChange: (String) -> Unit) {
+        val field = editField(hint, value, id, onChange)
+        val container = verticalContainer().apply {
+            background = rounded(R.color.card_white, R.color.card_border, 14)
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            addView(label(title).apply { textSize = 14f; setTypeface(typeface, Typeface.BOLD); setPadding(0, 0, 0, 0) })
+            field.background = null
+            field.setPadding(0, 0, 0, 0)
+            val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
+            row.addView(field, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(TextView(this@MainActivity).apply {
+                text = getString(R.string.change); textSize = 14f; setTextColor(getColor(R.color.blue)); minHeight = resources.getDimensionPixelSize(R.dimen.minimum_touch_target)
+                gravity = android.view.Gravity.CENTER; setPadding(dp(10), 0, dp(10), 0)
+                contentDescription = getString(R.string.change_place, title); isClickable = true; isFocusable = true
+                val highlight = android.util.TypedValue()
+                if (theme.resolveAttribute(android.R.attr.selectableItemBackground, highlight, true)) setBackgroundResource(highlight.resourceId)
+                setOnClickListener { openLocationSearch(id == R.id.home_origin) }
+            })
+            addView(row)
+        }
+        add(container)
+    }
+
     private fun addNavButton(parent: LinearLayout, text: String, action: () -> Unit) {
-        parent.addView(button(text, action), LinearLayout.LayoutParams(0, dp(52), 1f))
+        val control = button(text, action).apply {
+            setTextColor(getColor(R.color.blue))
+            background = RippleDrawable(ColorStateList.valueOf(0x443F6FAA), rounded(R.color.card_white, R.color.blue, 14), null)
+        }
+        parent.addView(control, LinearLayout.LayoutParams(0, dp(52), 1f).apply { marginEnd = dp(8) })
+    }
+
+    private fun updateNavigation() {
+        val nav = findViewById<LinearLayout>(R.id.navigation)
+        if (nav.childCount < 2) return
+        val explore = screen == Screen.EXPLORE || (screen == Screen.DETAILS && detailsBackScreen() == Screen.EXPLORE) || (screen == Screen.SCANNER && scannerNeutral) || (screen == Screen.ABOUT && aboutReturnScreen == Screen.EXPLORE)
+        for (i in 0 until nav.childCount) {
+            val control = nav.getChildAt(i) as Button
+            val active = (i == 1) == explore
+            control.isSelected = active
+            control.contentDescription = if (active) "${control.text}, current tab" else control.text
+            control.setTextColor(if (active) Color.WHITE else getColor(R.color.blue))
+            control.background = RippleDrawable(ColorStateList.valueOf(0x443F6FAA), if (active) rounded(R.color.blue, R.color.blue, 14) else rounded(R.color.card_white, R.color.blue, 14), null)
+        }
     }
 
     private fun addButton(text: String, action: () -> Unit) = add(button(text, action))
 
+    private fun secondaryButton(text: String, action: () -> Unit) = button(text, action).apply {
+        setTextColor(getColor(R.color.blue))
+        background = RippleDrawable(ColorStateList.valueOf(0x443F6FAA), rounded(R.color.card_white, R.color.blue, 14), null)
+    }
+
     private fun button(text: String, action: () -> Unit) = Button(this).apply {
         this.text = text
+        isAllCaps = false
+        textSize = 16f
+        typeface = Typeface.create(resources.getFont(R.font.atkinson_hyperlegible_next), Typeface.BOLD)
+        setTextColor(Color.WHITE)
+        backgroundTintList = null
+        background = RippleDrawable(ColorStateList.valueOf(0x443F6FAA), rounded(R.color.blue, R.color.blue, 14), null)
         minHeight = dp(48)
         setOnClickListener { action() }
     }
 
+    private fun rounded(fill: Int, stroke: Int, radius: Int) = GradientDrawable().apply {
+        setColor(getColor(fill))
+        setStroke(dp(1), getColor(stroke))
+        cornerRadius = dp(radius).toFloat()
+    }
+
     private fun addHeading(text: String) = add(TextView(this).apply {
         this.text = text
-        textSize = 20f
-        setTypeface(typeface, android.graphics.Typeface.BOLD)
+        textSize = 24f
+        typeface = Typeface.create(resources.getFont(R.font.atkinson_hyperlegible_next), Typeface.BOLD)
+        setTextColor(getColor(R.color.ink))
         setPadding(0, dp(12), 0, dp(8))
         isAccessibilityHeading = true
     })
 
-    private fun addBody(text: String) = add(label(text))
+    private fun addBody(text: String) = add(label(text).apply {
+        if (screen == Screen.ABOUT) {
+            background = rounded(R.color.card_white, R.color.card_border, 12)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+        }
+    })
 
     private fun label(text: String) = TextView(this).apply {
         this.text = text
         textSize = 16f
+        typeface = resources.getFont(R.font.atkinson_hyperlegible_next)
+        setTextColor(getColor(R.color.ink))
         setPadding(dp(4), dp(8), dp(4), dp(8))
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
     }
@@ -862,13 +1132,13 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     }
 
     private fun add(view: View) {
-        content.addView(view, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        content.addView(view, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) })
     }
 
     private fun locationName(id: String): String = catalog.locations.firstOrNull { it.id == id }?.name ?: "Unknown location"
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    private enum class Screen { HOME, RESULTS, DETAILS, EXPLORE, ABOUT, SCANNER }
+    private enum class Screen { HOME, SEARCH, RESULTS, NO_ROUTE, DETAILS, EXPLORE, ABOUT, SCANNER }
 
     companion object {
         private const val KEY_ORIGIN_TEXT = "origin_text"
@@ -876,15 +1146,22 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         private const val KEY_ORIGIN_ID = "origin_id"
         private const val KEY_DESTINATION_ID = "destination_id"
         private const val KEY_SCREEN = "screen"
+        private const val KEY_EXPLORE_PATTERN = "explore_pattern"
+        private const val KEY_DETAILS_PATTERN = "details_pattern"
+        private const val KEY_DETAILS_TEXT_ONLY = "details_text_only"
+        private const val KEY_SEARCH_ORIGIN = "search_origin"
+        private const val KEY_LOCATION_QUERY = "location_query"
+        private const val KEY_ABOUT_RETURN = "about_return"
         private const val KEY_PATTERN = "pattern"
         private const val KEY_BOARD = "board"
         private const val KEY_ALIGHT = "alight"
         private const val KEY_SCANNER_NEUTRAL = "scanner_neutral"
         private const val KEY_SCANNER_RETURN = "scanner_return"
         private const val EXPLORE_LIST_TAG = "explore-list"
+        private const val LOCATION_LIST_TAG = "location-list"
         private const val MAX_RECORDED_LATENCIES = 100
         private const val EXPECTED_MODEL_HASH = "183a212b84273fc58870bf4dfd10bb76f52cecabf9e0c7ac5b8f1d01563116d8"
         private const val LIVE_SCANNER_ENABLED = false // shortcut: export parity is unresolved; enable after a successful PyTorch comparison.
-        private const val LIVE_SCANNER_UNAVAILABLE = "Detector unavailable: export parity failed or the model asset is missing/corrupt. Manual planning is still available."
+        private const val LIVE_SCANNER_UNAVAILABLE = "Scanner is unavailable right now. You can still see your routes and stops."
     }
 }

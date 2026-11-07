@@ -7,6 +7,7 @@ import android.graphics.Path
 import android.util.AttributeSet
 import android.view.View
 import com.parapo.prototype.data.GeometryPoint
+import com.parapo.prototype.R
 
 class RouteDiagramView @JvmOverloads constructor(
     context: Context,
@@ -14,9 +15,13 @@ class RouteDiagramView @JvmOverloads constructor(
 ) : View(context, attrs) {
     var points: List<GeometryPoint> = emptyList()
         set(value) { field = value; invalidate() }
+    var boardingSequence: Int? = null
+        set(value) { field = value; invalidate() }
+    var alightingSequence: Int? = null
+        set(value) { field = value; invalidate() }
 
-    private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xff2457a6.toInt(); strokeWidth = dp(4f); style = Paint.Style.STROKE }
-    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xff2457a6.toInt(); style = Paint.Style.FILL }
+    private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = context.getColor(R.color.blue); strokeWidth = dp(4f); style = Paint.Style.STROKE }
+    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -40,8 +45,20 @@ class RouteDiagramView @JvmOverloads constructor(
             points.drop(1).forEach { lineTo(x(it), y(it)) }
         }
         canvas.drawPath(path, linePaint)
-        canvas.drawCircle(x(points.first()), y(points.first()), dp(7f), dotPaint)
-        canvas.drawCircle(x(points.last()), y(points.last()), dp(7f), dotPaint)
+        if (boardingSequence == null && alightingSequence == null) {
+            dotPaint.color = context.getColor(R.color.blue)
+            canvas.drawCircle(x(points.first()), y(points.first()), dp(7f), dotPaint)
+            canvas.drawCircle(x(points.last()), y(points.last()), dp(7f), dotPaint)
+        } else {
+            boardingSequence?.let { sequence -> points.firstOrNull { it.stopOccurrenceSequence == sequence } }?.let {
+                dotPaint.color = context.getColor(R.color.marigold)
+                canvas.drawCircle(x(it), y(it), dp(7f), dotPaint)
+            }
+            alightingSequence?.let { sequence -> points.firstOrNull { it.stopOccurrenceSequence == sequence } }?.let {
+                dotPaint.color = context.getColor(R.color.outcome_green)
+                canvas.drawCircle(x(it), y(it), dp(7f), dotPaint)
+            }
+        }
     }
 
     private fun dp(value: Float): Float = value * resources.displayMetrics.density

@@ -9,6 +9,7 @@ ParaPo is a small Android school prototype for checking whether a verified jeepn
 - The experimental fine-tuned YOLOv8n export is local and ignored by Git. Its recorded test result is 0 correct sign detections out of 3, and ONNX/PyTorch parity failed. It is not selected or phone-ready. The app therefore reports scanning unavailable instead of using it to guide a commuter.
 - The M4 implementation contains CameraX frame handling, original-resolution crop/OCR, route and direction decisions, session/freshness checks, and manual fallback. Camera permission is optional at install time and is requested only by the scanner path when live scanning is enabled. The current build's parity gate prevents requesting the camera.
 - The app has no network permission. OCR and detector dependencies are bundled; no frame or OCR text is saved or logged. A user can explicitly share a versioned JSON summary containing only versions and aggregate counts/timing measurements.
+- The Android Views interface follows the [ParaPo Figma design](https://www.figma.com/design/eTi2eZQ5W8FU6JJOTPUbjR/ParaPo?node-id=6-3), with larger controls, catalog-backed place search, route cards and a text-only stop view. See [design implementation notes](docs/design-implementation.md) for adaptations and checks.
 
 The detector is packaged only when the ignored local file exists. To prepare a local demo APK, copy the reviewed export into the asset path before building:
 

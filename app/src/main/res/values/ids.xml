@@ -2,5 +2,6 @@
     <item name="home_origin" type="id" />
     <item name="home_destination" type="id" />
     <item name="explore_search" type="id" />
+    <item name="location_search" type="id" />
     <item name="route_results" type="id" />
 </resources>

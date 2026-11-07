@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import com.parapo.prototype.R
 import android.view.MotionEvent
 import android.view.View
 import com.parapo.prototype.scanner.SignBox
@@ -63,7 +64,7 @@ class ScannerOverlayView(context: Context) : View(context) {
         boxes.forEachIndexed { index, box ->
             val mapped = toPreviewBox(box, frameWidth, frameHeight, width, height)
             val isSelected = selected?.let { intersectionOverUnion(it, box) > 0.9f } == true
-            boxPaint.color = if (isSelected) Color.rgb(0, 180, 70) else Color.rgb(255, 193, 7)
+            boxPaint.color = if (isSelected) context.getColor(R.color.outcome_green) else context.getColor(R.color.marigold)
             canvas.drawRect(mapped.left, mapped.top, mapped.right, mapped.bottom, boxPaint)
             if (isSelected) canvas.drawText("Selected sign", mapped.left, max(dp(18), mapped.top - dp(6)), labelPaint)
             else canvas.drawText("Sign ${index + 1}", mapped.left, max(dp(18), mapped.top - dp(6)), labelPaint)
