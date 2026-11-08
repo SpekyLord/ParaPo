@@ -1,0 +1,20 @@
+[
+  {"text":"03", "status":"found", "route_id":"ILO-03"},
+  {"text":"3", "status":"found", "route_id":"ILO-03"},
+  {"text":"03 UNGKA-ILOILO CITY PROPER VIA CPU", "status":"found", "route_id":"ILO-03"},
+  {"text":"10 BUNTATALA / TAGBAK - CITY PROPER", "status":"found", "route_id":"ILO-10"},
+  {"text":"Jaro Liko", "status":"found", "route_id":"ILO-10"},
+  {"text":"Ungka-CPU jeep", "status":"found", "route_id":"ILO-03"},
+  {"text":"13", "status":"unsupported"},
+  {"text":"30", "status":"unsupported"},
+  {"text":"103", "status":"unsupported"},
+  {"text":"03 10", "status":"ambiguous"},
+  {"text":"13 Tagbak", "status":"ambiguous"},
+  {"text":"11 TICUD LA PAZ", "status":"unsupported"},
+  {"text":"", "status":"unreadable"},
+  {"text":"unreadable", "status":"unreadable"},
+  {"text":"A03B", "status":"unreadable"},
+  {"text":"037", "status":"unsupported"},
+  {"text":"03N", "status":"unreadable"},
+  {"text":"03UNGKA", "status":"unreadable"}
+]

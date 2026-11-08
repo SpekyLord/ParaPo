@@ -1,5 +1,7 @@
 # M4 implementation evidence — 2026-11-07
 
+Historical note: the current [2026-11-08 scanner update](scanner-2026-11-08.md) supersedes this page's preview, permission, model, and recognition status. Aligned OCR and an explicit checked-detector option are now implemented; measured still-crop OCR and corrected desktop/phone parity are recorded there. The dated evidence below remains unchanged.
+
 ## Current state
 
 The M4 code is implemented, but **M4-01–M4-17 remain open** where runtime, model, or phone evidence is required. Live detection is deliberately disabled in this build. The scanner entry point explains that the detector is unavailable and preserves the manual journey/details path. It does not request camera permission while the parity gate is closed.

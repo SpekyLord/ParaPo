@@ -28,6 +28,17 @@ class ExperimentTests(unittest.TestCase):
         with self.assertRaises(experiment.InvalidInput):
             experiment.validate_manifest(rows)
 
+    def test_owner_links_need_visible_context_and_unique_ids(self):
+        rows = json.loads(json.dumps(self.rows))
+        rows[1]["signs"][0]["owner_id"] = "owner-1"
+        with self.assertRaises(experiment.InvalidInput):
+            experiment.validate_manifest(rows)
+        rows[1]["vehicles"] = [{"owner_id": "owner-1", "box": [0, 0, 20, 20]}]
+        experiment.validate_manifest(rows)
+        rows[1]["vehicles"].append(rows[1]["vehicles"][0])
+        with self.assertRaises(experiment.InvalidInput):
+            experiment.validate_manifest(rows)
+
     def test_rejects_cross_split_source_derivative(self):
         rows = json.loads(json.dumps(self.rows))
         rows[-1]["derivative_of"] = rows[1]["source_id"]
@@ -70,8 +81,9 @@ class ExperimentTests(unittest.TestCase):
              "truth_route_code": "ILO-03", "predicted_route_code": None},
         ]
         metrics = experiment.ocr_metrics(rows, "ground_truth")
-        self.assertEqual(1, metrics["route_code_samples"])
-        self.assertEqual(0.0, metrics["exact_route_code_accuracy"])
+        self.assertEqual(0, metrics["route_code_samples"])
+        self.assertEqual(2, metrics["extraction_not_run"])
+        self.assertIsNone(metrics["exact_route_code_accuracy"])
         self.assertIsNone(experiment.ocr_metrics(rows[:1], "ground_truth")["exact_route_code_accuracy"])
 
     def test_route_accuracy_does_not_count_unknown_labels_as_correct(self):
@@ -137,6 +149,56 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(1, experiment.validate_parity(reference, exported, 0.2, 0.02))
         with self.assertRaises(experiment.InvalidInput):
             experiment.validate_parity(reference, exported, 0.05, 0.02)
+
+    def test_parity_matches_geometry_when_scores_reorder_but_rejects_missing_boxes(self):
+        a = {"box": [0, 0, 10, 10], "score": .80}
+        b = {"box": [30, 30, 40, 40], "score": .81}
+        reference = [{"sample_id": "s", "detections": [a, b]}]
+        reordered = [{"sample_id": "s", "detections": [{**b, "score": .80}, {**a, "score": .81}]}]
+        self.assertEqual(2, experiment.validate_parity(reference, reordered, 1.5, .02))
+        with self.assertRaises(experiment.InvalidInput):
+            experiment.validate_parity(reference, [{"sample_id": "s", "detections": [a]}], 1.5, .02)
+
+    def test_unknown_ocr_truth_and_false_crops_do_not_pollute_cer(self):
+        rows = [{"crop_source": "detector", "truth_text": "03", "truth_text_known": True,
+                 "predicted_text": "3", "extraction_status": "completed", "truth_printed_codes": ["03"],
+                 "printed_codes": ["3"], "truth_canonical_route_id": "ILO-03", "canonical_route_id": "ILO-03"},
+                {"crop_source": "detector", "truth_text": "", "truth_text_known": False,
+                 "predicted_text": "nonsense", "truth_match_status": "unmatched", "extraction_status": "completed"}]
+        metrics = experiment.ocr_metrics(rows, "detector")
+        self.assertEqual(.5, metrics["character_error_rate"])
+        self.assertEqual(0, metrics["exact_route_code_accuracy"])
+        self.assertEqual(1, metrics["normalized_code_accuracy"])
+        self.assertEqual(1, metrics["canonical_route_accuracy"])
+        self.assertEqual(1, metrics["unknown_text_samples"])
+        self.assertEqual(1, metrics["unmatched_crops_with_text"])
+
+    def test_same_route_wrong_owner_and_unknown_owner_are_not_correct_matches(self):
+        def row(identity, ownership):
+            return {"encounter_id": identity, "eligible_matching": True, "matching_pattern_id": "P1",
+                    "definitive": True, "direction_status": "resolved", "evidence_type": "recorded_replay",
+                    "readable_at_ms": 100, "useful_window_end_ms": 1000,
+                    "green_events": [{"pattern_id": "P1", "owner_correctness": ownership, "stable": True, "at_ms": 400}]}
+        metrics = experiment.encounter_metrics([row("a", "incorrect"), row("b", "unknown"), row("c", "correct")])
+        self.assertEqual(1, metrics["wrong_green"]["count"])
+        self.assertEqual(3, metrics["wrong_green"]["denominator"])
+        self.assertFalse(metrics["wrong_green_fully_verified"])
+        self.assertEqual(1, metrics["matching_recall"]["count"])
+        self.assertEqual(300, metrics["first_stable_correct_ms_median"])
+        self.assertEqual(1, metrics["correct_before_window_closed"]["count"])
+
+    def test_green_on_ineligible_encounter_is_wrong_even_with_same_pattern_label(self):
+        row = {"encounter_id": "wrong-journey", "eligible_matching": False, "matching_pattern_id": "P1",
+               "definitive": True, "direction_status": "resolved",
+               "green_events": [{"pattern_id": "P1", "owner_correctness": "correct"}]}
+        self.assertEqual(1, experiment.encounter_metrics([row])["wrong_green"]["count"])
+
+    def test_shared_route_cases(self):
+        from route_text import interpret
+        for case in json.loads((FIXTURE.parent / "route-text-cases.json").read_text()):
+            result = interpret(case["text"])
+            self.assertEqual(case["status"], result["route_status"], case["text"])
+            self.assertEqual(case.get("route_id"), result["canonical_route_id"], case["text"])
 
     def test_existing_evidence_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as directory:

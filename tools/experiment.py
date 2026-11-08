@@ -126,6 +126,13 @@ def validate_manifest(rows):
         signs = row.get("signs", [])
         if not isinstance(signs, list):
             raise InvalidInput("signs must be a list")
+        vehicles = row.get("vehicles", [])
+        if not isinstance(vehicles, list) or any(not isinstance(vehicle, dict) or not validate_box(vehicle.get("box"))
+                                                or not isinstance(vehicle.get("owner_id"), str) or not vehicle["owner_id"] for vehicle in vehicles):
+            raise InvalidInput("owner context needs valid vehicle boxes and IDs")
+        owner_ids = {vehicle["owner_id"] for vehicle in vehicles}
+        if len(owner_ids) != len(vehicles):
+            raise InvalidInput("duplicate owner ID within photo")
         review = row.get("annotation_review")
         if review is not None and not isinstance(review, dict):
             raise InvalidInput("annotation review note must be an object")
@@ -134,6 +141,8 @@ def validate_manifest(rows):
         for sign in signs:
             if not isinstance(sign, dict):
                 raise InvalidInput("sign annotations must be objects")
+            if sign.get("owner_id") is not None and sign["owner_id"] not in owner_ids:
+                raise InvalidInput("sign owner reference is unknown")
             if not validate_box(sign.get("box")):
                 raise InvalidInput("invalid sign box")
             if not isinstance(sign.get("visible_text", ""), str):
@@ -257,27 +266,60 @@ def detection_metrics(samples, predictions, score_threshold=0.5, iou_threshold=0
 
 def ocr_metrics(rows, source):
     chosen = [row for row in rows if row.get("crop_source") == source]
-    edits = total_chars = exact = 0
-    route_code_rows = []
+    edits = total_chars = exact_text = text_count = 0
+    printed_pairs, normalized_pairs, route_pairs = [], [], []
+    not_run = errors = unknown_text = 0
     for row in chosen:
         truth, predicted = row.get("truth_text"), row.get("predicted_text")
         if not isinstance(truth, str) or not isinstance(predicted, str):
             raise InvalidInput("OCR text fields must be strings")
-        edits += levenshtein(truth, predicted)
-        total_chars += len(truth)
-        truth_code, predicted_code = row.get("truth_route_code"), row.get("predicted_route_code")
-        if truth_code is not None and not isinstance(truth_code, str):
-            raise InvalidInput("OCR route codes must be text or null")
-        if predicted_code is not None and not isinstance(predicted_code, str):
-            raise InvalidInput("OCR route codes must be text or null")
-        if isinstance(truth_code, str) and truth_code.strip() and truth_code.casefold() != "unknown":
-            route_code_rows.append((truth_code, predicted_code))
-    exact = sum(truth == predicted for truth, predicted in route_code_rows)
+        if "truth_text_known" in row and not isinstance(row["truth_text_known"], bool):
+            raise InvalidInput("OCR truth readability must be boolean")
+        if row.get("truth_match_status", "matched") not in {"matched", "unmatched"}:
+            raise InvalidInput("invalid OCR crop match status")
+        for key in ("truth_canonical_route_id", "canonical_route_id"):
+            if row.get(key) is not None and not isinstance(row[key], str):
+                raise InvalidInput("canonical route IDs must be text or null")
+        if row.get("truth_text_known", bool(truth.strip())) and row.get("truth_match_status") != "unmatched":
+            edits += levenshtein(truth, predicted)
+            total_chars += len(truth)
+            text_count += 1
+            exact_text += int(truth == predicted)
+        else:
+            unknown_text += 1
+        status = row.get("extraction_status", "completed" if row.get("predicted_route_code") is not None else "not_run")
+        if status not in {"completed", "not_run", "error"}:
+            raise InvalidInput("invalid code extraction status")
+        not_run += status == "not_run"
+        errors += status == "error"
+        if status != "completed":
+            continue
+        truth_codes = row.get("truth_printed_codes")
+        codes = row.get("printed_codes", [])
+        if truth_codes is not None:
+            if not isinstance(truth_codes, list) or not all(isinstance(c, str) and re.fullmatch(r"[0-9]+", c) for c in truth_codes):
+                raise InvalidInput("printed truth codes must be numeric strings")
+            if not isinstance(codes, list) or not all(isinstance(c, str) and re.fullmatch(r"[0-9]+", c) for c in codes):
+                raise InvalidInput("printed predictions must be numeric strings")
+            printed_pairs.append((set(truth_codes), set(codes)))
+            normalized_pairs.append(({c.lstrip("0") or "0" for c in truth_codes}, {c.lstrip("0") or "0" for c in codes}))
+        route_id = row.get("truth_canonical_route_id")
+        if route_id:
+            route_pairs.append((route_id, row.get("canonical_route_id")))
+    def accuracy(pairs):
+        return sum(a == b for a, b in pairs) / len(pairs) if pairs else None
     return {
         "samples": len(chosen),
+        "text_samples": text_count, "unknown_text_samples": unknown_text,
+        "exact_text_accuracy": exact_text / text_count if text_count else None,
         "character_error_rate": edits / total_chars if total_chars else None,
-        "route_code_samples": len(route_code_rows),
-        "exact_route_code_accuracy": exact / len(route_code_rows) if route_code_rows else None,
+        "route_code_samples": len(printed_pairs), "exact_route_code_accuracy": accuracy(printed_pairs),
+        "normalized_code_accuracy": accuracy(normalized_pairs),
+        "canonical_route_samples": len(route_pairs), "canonical_route_accuracy": accuracy(route_pairs),
+        "unknown_canonical_route_samples": len(chosen) - sum(bool(r.get("truth_canonical_route_id")) for r in chosen),
+        "extraction_not_run": not_run, "extraction_errors": errors,
+        "unmatched_detector_crops": sum(r.get("truth_match_status") == "unmatched" for r in chosen),
+        "unmatched_crops_with_text": sum(r.get("truth_match_status") == "unmatched" and bool(r["predicted_text"].strip()) for r in chosen),
     }
 
 
@@ -353,6 +395,12 @@ def sign_size_metrics(samples, predictions, score_threshold=0.5, iou_threshold=0
 
 
 def encounter_metrics(rows):
+    kinds = {row.get("evidence_type", "legacy_unknown") for row in rows}
+    if not kinds <= {"legacy_unknown", "still_photo", "recorded_replay", "live_encounter", "synthetic"}:
+        raise InvalidInput("invalid encounter evidence type")
+    if len(kinds) > 1:
+        return {"by_evidence_type": {kind: encounter_metrics([r for r in rows if r.get("evidence_type", "legacy_unknown") == kind])
+                                     for kind in sorted(kinds)}}
     if len({row.get("encounter_id") for row in rows}) != len(rows):
         raise InvalidInput("encounter decisions must have one row per encounter")
     wrong_green = green_encounters = matching_total = matching_success = 0
@@ -362,8 +410,25 @@ def encounter_metrics(rows):
     useful_window = 0
     observed_timing = on_time = 0
     failure_stages = Counter()
+    owner_counts = Counter()
+    unknown_green = unresolved = 0
+    stable_times = []
     for row in rows:
-        greens = row.get("green_pattern_ids", [])
+        events = row.get("green_events")
+        if events is not None and "green_pattern_ids" in row:
+            raise InvalidInput("use green events or legacy pattern IDs, not both")
+        if events is None:
+            events = [{"pattern_id": pattern, "owner_correctness": "unknown"} for pattern in row.get("green_pattern_ids", [])]
+        if not isinstance(events, list) or any(not isinstance(event, dict) for event in events):
+            raise InvalidInput("green_events must be a list of observations")
+        for event in events:
+            if event.get("owner_correctness", "unknown") not in {"correct", "incorrect", "unknown"}:
+                raise InvalidInput("invalid green ownership result")
+            if "at_ms" in event and (type(event["at_ms"]) not in (int, float) or not math.isfinite(event["at_ms"]) or event["at_ms"] < 0):
+                raise InvalidInput("event time must be finite and non-negative")
+            if "stable" in event and not isinstance(event["stable"], bool):
+                raise InvalidInput("event stability must be boolean")
+        greens = [event.get("pattern_id") for event in events]
         if not isinstance(greens, list):
             raise InvalidInput("green_pattern_ids must be a list")
         if any(not isinstance(pattern, str) or not pattern for pattern in greens):
@@ -377,33 +442,70 @@ def encounter_metrics(rows):
         if row["eligible_matching"] and not row.get("matching_pattern_id"):
             raise InvalidInput("eligible matching encounter needs its independent pattern label")
         correct_id = row.get("matching_pattern_id")
-        incorrect = any(pattern != correct_id for pattern in greens)
+        incorrect = bool(events) and (not row["eligible_matching"] or any(
+            event["pattern_id"] != correct_id or event.get("owner_correctness") == "incorrect" for event in events))
+        owner_unknown = any(event.get("owner_correctness", "unknown") == "unknown" for event in events)
+        unknown_green += int(bool(events) and owner_unknown)
+        assignments = row.get("owner_assignments", [event.get("owner_correctness", "unknown") for event in events])
+        if not isinstance(assignments, list) or any(value not in {"correct", "incorrect", "unknown"} for value in assignments):
+            raise InvalidInput("owner assignments must be correct, incorrect, or unknown")
+        owner_counts.update(assignments)
+        direction = row.get("direction_status", "unknown")
+        if direction not in {"resolved", "unresolved", "unknown"}:
+            raise InvalidInput("invalid direction status")
+        unresolved += direction != "resolved"
         if greens:
             green_encounters += 1
             wrong_green += int(incorrect)
         if not row["definitive"]:
             abstained += 1
         late += int(row.get("correct_before_window_closed") is False)
-        if isinstance(row.get("latency_ms"), (int, float)) and row["latency_ms"] >= 0:
+        if row.get("timing_boundary") == "capture_to_display" and isinstance(row.get("latency_ms"), (int, float)) and row["latency_ms"] >= 0:
             latencies.append(row["latency_ms"])
         if isinstance(row.get("useful_window_ms"), (int, float)) and row["useful_window_ms"] >= 0:
             useful_window += 1
         if isinstance(row.get("correct_before_window_closed"), bool):
             observed_timing += 1
-            on_time += int(row["correct_before_window_closed"])
+            on_time += int(row["correct_before_window_closed"] and bool(events) and not incorrect and not owner_unknown and direction == "resolved")
         stages = row.get("failure_stages", [])
-        allowed_stages = {"localization", "crop_transformation", "ocr", "route_alias", "direction", "unsupported_sign", "timing", "other"}
+        allowed_stages = {"localization", "crop_transformation", "ocr", "route_alias", "direction", "unsupported_sign", "timing", "ownership", "other"}
         if not isinstance(stages, list) or any(stage not in allowed_stages for stage in stages):
             raise InvalidInput("failure stages must use the documented categories")
         failure_stages.update(stages)
-        for key in ("latency_ms", "useful_window_ms"):
-            if key in row and (not isinstance(row[key], (int, float)) or not math.isfinite(row[key]) or row[key] < 0):
+        for key in ("latency_ms", "useful_window_ms", "readable_at_ms", "useful_window_end_ms"):
+            if key in row and (type(row[key]) not in (int, float) or not math.isfinite(row[key]) or row[key] < 0):
                 raise InvalidInput("decision timing values must be finite non-negative numbers")
+        correct_stable = [event["at_ms"] for event in events if row["eligible_matching"] and direction == "resolved" and event.get("pattern_id") == correct_id
+                          and event.get("owner_correctness") == "correct" and event.get("stable") is True and "at_ms" in event]
+        if correct_stable and "readable_at_ms" in row:
+            first = min(correct_stable)
+            if first < row["readable_at_ms"]:
+                raise InvalidInput("stable result precedes annotated readable start")
+            stable_times.append(first - row["readable_at_ms"])
+        if "useful_window_end_ms" in row:
+            useful_window += 1
+            if "readable_at_ms" in row and row["useful_window_end_ms"] < row["readable_at_ms"]:
+                raise InvalidInput("useful window ends before readable start")
+            if "correct_before_window_closed" in row:
+                raise InvalidInput("use timed events or a legacy window summary, not both")
+            observed_timing += 1
+            timely = bool(correct_stable and min(correct_stable) <= row["useful_window_end_ms"] and not incorrect and not owner_unknown)
+            on_time += timely
+            late += not timely
         if row.get("eligible_matching") is True:
             matching_total += 1
-            matching_success += int(bool(greens) and correct_id in greens and not incorrect)
+            matching_success += int(bool(greens) and correct_id in greens and not incorrect and not owner_unknown and direction == "resolved")
     return {
         "encounters": len(rows),
+        "evidence_type": next(iter(kinds), None),
+        "owner_assignments": {"attempted": sum(owner_counts.values()), "correct": owner_counts["correct"],
+                              "incorrect": owner_counts["incorrect"], "unknown": owner_counts["unknown"]},
+        "green_encounters_with_unknown_ownership": unknown_green,
+        "wrong_green_fully_verified": unknown_green == 0,
+        "unresolved_or_unknown_direction_encounters": unresolved,
+        "first_stable_correct_ms_median": percentile(stable_times, 0.5),
+        "first_stable_correct_ms_p95": percentile(stable_times, 0.95),
+        "first_stable_correct_timed_encounters": len(stable_times),
         "wrong_green": {"count": wrong_green, "denominator": green_encounters,
                         "fraction": wrong_green / green_encounters if green_encounters else "not estimable",
                         "wilson_95": wilson(wrong_green, green_encounters)},
@@ -490,22 +592,33 @@ def validate_parity(reference_rows, exported_rows, box_tolerance, score_toleranc
         raise InvalidInput("parity tolerances must be finite non-negative numbers")
     compared = 0
     for sample_id in reference:
-        left = sorted(reference[sample_id], key=lambda d: d.get("score", 0), reverse=True)
-        right = sorted(exported[sample_id], key=lambda d: d.get("score", 0), reverse=True)
+        left, right = reference[sample_id], exported[sample_id]
         if len(left) != len(right):
             raise InvalidInput("export parity detection counts differ")
-        for a, b in zip(left, right):
-            if not validate_box(a.get("box")) or not validate_box(b.get("box")):
+        for detection in left + right:
+            if not validate_box(detection.get("box")):
                 raise InvalidInput("parity output contains an invalid box")
-            if any(not isinstance(d.get("score"), (int, float)) or not math.isfinite(d["score"]) or not 0 <= d["score"] <= 1 for d in (a, b)):
+            if not isinstance(detection.get("score"), (int, float)) or not math.isfinite(detection["score"]) or not 0 <= detection["score"] <= 1:
                 raise InvalidInput("parity output contains an invalid score")
-            if any(abs(x - y) > box_tolerance for x, y in zip(a["box"], b["box"])):
-                raise InvalidInput("export parity box exceeds tolerance")
-            if abs(a.get("score", 0) - b.get("score", 0)) > score_tolerance:
-                raise InvalidInput("export parity score exceeds tolerance")
-            if (a.get("pattern_id"), a.get("direction")) != (b.get("pattern_id"), b.get("direction")):
-                raise InvalidInput("export parity route or direction differs")
-            compared += 1
+        # Find a complete one-to-one correspondence; score reordering is not a box mismatch.
+        candidates = [[j for j, b in sorted(enumerate(right), key=lambda pair: (-box_iou(a["box"], pair[1]["box"]), pair[0]))
+                       if all(abs(x - y) <= box_tolerance for x, y in zip(a["box"], b["box"]))
+                       and abs(a["score"] - b["score"]) <= score_tolerance
+                       and (a.get("pattern_id"), a.get("direction")) == (b.get("pattern_id"), b.get("direction"))]
+                      for a in left]
+        owners = {}
+        def assign(index, seen):
+            for candidate in candidates[index]:
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                if candidate not in owners or assign(owners[candidate], seen):
+                    owners[candidate] = index
+                    return True
+            return False
+        if not all(assign(index, set()) for index in range(len(left))):
+            raise InvalidInput("export parity has no one-to-one box/score/label match within tolerance")
+        compared += len(left)
     return compared
 
 

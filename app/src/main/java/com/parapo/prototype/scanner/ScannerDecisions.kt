@@ -6,6 +6,7 @@ import com.parapo.prototype.data.VerificationStatus
 import com.parapo.prototype.data.normalizeAlias
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import java.util.Locale
 
 data class SignBox(val left: Float, val top: Float, val right: Float, val bottom: Float) {
@@ -17,8 +18,8 @@ data class SignBox(val left: Float, val top: Float, val right: Float, val bottom
 fun unletterbox(box: SignBox, imageWidth: Int, imageHeight: Int, inputSize: Int = 320): SignBox {
     if (imageWidth <= 0 || imageHeight <= 0) return SignBox(0f, 0f, 0f, 0f)
     val scale = min(inputSize.toFloat() / imageWidth, inputSize.toFloat() / imageHeight)
-    val padX = (inputSize - imageWidth * scale) / 2f
-    val padY = (inputSize - imageHeight * scale) / 2f
+    val padX = ((inputSize - (imageWidth * scale).roundToInt()) / 2).toFloat()
+    val padY = ((inputSize - (imageHeight * scale).roundToInt()) / 2).toFloat()
     return clipBox(
         SignBox((box.left - padX) / scale, (box.top - padY) / scale,
             (box.right - padX) / scale, (box.bottom - padY) / scale),
@@ -110,7 +111,8 @@ class SingleSignTarget {
         if (boxes.isEmpty()) return null.also { clear() }
         val ranked = boxes.map { it to intersectionOverUnion(previous, it) }.sortedByDescending { it.second }
         if (ranked.first().second < MIN_ASSOCIATION_IOU ||
-            (ranked.size > 1 && ranked[0].second - ranked[1].second < AMBIGUITY_MARGIN)
+            (ranked.size > 1 && (ranked[0].second - ranked[1].second < AMBIGUITY_MARGIN ||
+                ranked.drop(1).any { intersectionOverUnion(ranked[0].first, it.first) > 0f }))
         ) return null.also { clear() }
         selectedBox = ranked.first().first
         return selectedBox
@@ -162,17 +164,25 @@ sealed interface RouteTextResolution {
 }
 
 object ScannerDecisions {
+    fun printedCodes(text: String): List<String> =
+        Regex("(?<![\\p{L}\\p{N}])\\d+(?![\\p{L}\\p{N}])").findAll(text)
+            .map { it.value }.distinct().toList()
+
+    fun normalizedCode(code: String): String = code.trimStart('0').ifEmpty { "0" }
+
     fun routeFromText(text: String, catalog: RouteCatalog): RouteTextResolution {
         val normalized = " ${normalizeText(text)} "
+        val codes = printedCodes(text).map(::normalizedCode).toSet()
         val matches = catalog.routes.filter { route ->
             val aliases = listOf(route.name) + route.aliases
             aliases.any { alias ->
                 val normalizedAlias = normalizeText(alias)
                 normalizedAlias.isNotEmpty() && normalized.contains(" $normalizedAlias ")
-            } || routeNumbers(aliases).any { number ->
-                Regex("(?<![a-z0-9])${Regex.escape(number)}(?![a-z0-9])").containsMatchIn(normalized)
-            }
+            } || routeNumbers(aliases).any { normalizedCode(it) in codes }
         }.map { it.id }.toSet()
+        val knownCodes = catalog.routes.flatMap { routeNumbers(listOf(it.name) + it.aliases) }
+            .map(::normalizedCode).toSet()
+        if (matches.isNotEmpty() && codes.any { it !in knownCodes }) return RouteTextResolution.Ambiguous(matches)
         return when (matches.size) {
             1 -> RouteTextResolution.Found(matches.first())
             in 2..Int.MAX_VALUE -> RouteTextResolution.Ambiguous(matches)

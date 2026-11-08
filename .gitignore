@@ -14,6 +14,7 @@ Thumbs.db
 
 # Generated Android/Python files
 .gradle/
+.kotlin/
 build/
 __pycache__/
 *.pyc

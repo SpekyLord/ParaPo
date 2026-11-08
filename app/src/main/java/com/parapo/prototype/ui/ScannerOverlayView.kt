@@ -32,6 +32,12 @@ class ScannerOverlayView(context: Context) : View(context) {
     private var frameWidth = 0
     private var frameHeight = 0
     var onSelectBox: ((SignBox) -> Unit)? = null
+    var alignedRegion = false
+        set(value) { field = value; invalidate() }
+
+    companion object {
+        val ALIGNED_REGION = SignBox(0.1f, 0.35f, 0.9f, 0.65f)
+    }
 
     init {
         isClickable = true
@@ -53,6 +59,13 @@ class ScannerOverlayView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        if (alignedRegion) {
+            boxPaint.color = context.getColor(R.color.marigold)
+            val region = ALIGNED_REGION
+            canvas.drawRect(width * region.left, height * region.top, width * region.right, height * region.bottom, boxPaint)
+            canvas.drawText("Align one sign here", width * region.left, height * region.top - dp(8), labelPaint)
+            return
+        }
         val centerX = width / 2f
         val centerY = height / 2f
         canvas.drawCircle(centerX, centerY, dp(42), reticlePaint)

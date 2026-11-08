@@ -103,7 +103,7 @@ class MainActivityTest {
                 assertHasText(activity, "No verified routes are available to browse.")
                 click(activity, "Info")
                 assertHasText(activity, "Dataset version: none")
-                assertHasText(activity, "Recognition model: YOLOv8n fine-tuned M3 demo-v3; provisional")
+                assertHasText(activity, "Recognition model: ${com.parapo.prototype.scanner.ScannerPipeline.MODEL_VERSION}")
             }
         }
     }
@@ -223,7 +223,7 @@ class MainActivityTest {
                 click(activity, "Explore")
                 click(activity, "Scan")
                 assertHasText(activity, "No trip is selected. Browse routes to see their stops.")
-                assertHasText(activity, "Route recognition is currently unavailable")
+                assertHasText(activity, "Automatic sign detection is experimental")
                 assertHasText(activity, "Back to Explore")
             }
         }
@@ -252,12 +252,99 @@ class MainActivityTest {
                 activity.findViewById<EditText>(R.id.home_destination).setText("C")
                 click(activity, "Find my route")
                 click(activity, "Scan")
-                assertHasText(activity, "Route recognition is currently unavailable")
+                assertHasText(activity, "Automatic sign detection is experimental")
                 assertHasText(activity, "Your trip is saved. Scan results won't assume a route.")
                 assertHasText(activity, "See my routes")
                 assertEquals(PackageManager.PERMISSION_GRANTED, activity.checkSelfPermission(android.Manifest.permission.CAMERA))
                 assertTrue(descendants(activity.findViewById(R.id.app_root)).any { it is androidx.camera.view.PreviewView })
+                assertHasText(activity, "Read aligned sign")
+                val pipelineField = MainActivity::class.java.getDeclaredField("scannerPipeline").apply { isAccessible = true }
+                (pipelineField.get(activity) as? com.parapo.prototype.scanner.ScannerPipeline)?.close()
+                pipelineField.set(activity, com.parapo.prototype.scanner.ScannerPipeline(activity, activity))
+                activity.onModelUnavailable("Test detector unavailable")
+                assertHasText(activity, "Test detector unavailable")
+                assertTrue(descendants(activity.findViewById(R.id.app_root)).any { it is androidx.camera.view.PreviewView })
+                assertHasText(activity, "See my routes")
             }
+        }
+    }
+
+    @Test fun alignedSnapshotUsesObservedTextAndReselectionRejectsDelayedSuccessAndFailure() {
+        app.catalogLoader = { uiFixture().copy(routes = listOf(Route("SYN-ROUTE", "Route 3", listOf("Route 3")))) }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.findViewById<EditText>(R.id.home_origin).setText("A")
+                activity.findViewById<EditText>(R.id.home_destination).setText("C")
+                click(activity, "Find my route")
+                click(activity, "More details")
+                click(activity, "Scan")
+                fun field(name: String) = MainActivity::class.java.getDeclaredField(name).apply { isAccessible = true }
+                val pipeline = com.parapo.prototype.scanner.ScannerPipeline(activity, activity)
+                field("scannerPipeline").set(activity, pipeline)
+                field("scannerBound").setBoolean(activity, true)
+                val read = MainActivity::class.java.getDeclaredMethod("readAlignedScanner").apply { isAccessible = true }
+                read.invoke(activity)
+                val session = field("scannerSessionId").getLong(activity)
+                val context = field("scannerContextKey").get(activity) as String
+                val target = field("scannerTargetId").get(activity) as String
+                val crop = Bitmap.createBitmap(80, 40, Bitmap.Config.ARGB_8888)
+                activity.onSnapshot(session, context, target, crop)
+                activity.onText(session, context, target, android.os.SystemClock.elapsedRealtime(), "03")
+                assertHasText(activity, "Captured sign only")
+                assertHasText(activity, "ML Kit: 03")
+                assertEquals(DecisionKind.CONFIRM_DIRECTION, (field("lastScannerDecision").get(activity) as ScannerDecision).kind)
+                click(activity, "Confirm this sign is heading Northbound")
+                assertEquals(DecisionKind.MATCH, (field("lastScannerDecision").get(activity) as ScannerDecision).kind)
+                assertHasText(activity, "Matches your selected journey")
+                click(activity, "Resume camera / reselect")
+                activity.onText(session, context, target, android.os.SystemClock.elapsedRealtime(), "10")
+                activity.onFailure(session, context, target)
+                val lateCrop = Bitmap.createBitmap(80, 40, Bitmap.Config.ARGB_8888)
+                activity.onSnapshot(session, context, target, lateCrop)
+                assertTrue(lateCrop.isRecycled)
+                assertEquals(null, field("lastScannerDecision").get(activity))
+                assertEquals(null, field("snapshotText").get(activity))
+                assertHasText(activity, "Align one sign, then tap Read aligned sign")
+            }
+        }
+    }
+
+    @Test fun liveAlignedCaptureAndCheckedDetectorKeepPreviewAndReselectionAvailable() {
+        app.catalogLoader = { uiFixture() }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            fun field(name: String) = MainActivity::class.java.getDeclaredField(name).apply { isAccessible = true }
+            fun awaitState(message: String, condition: (MainActivity) -> Boolean) {
+                val deadline = System.currentTimeMillis() + 20_000
+                var ready = false
+                while (!ready && System.currentTimeMillis() < deadline) {
+                    scenario.onActivity { ready = condition(it) }
+                    if (!ready) Thread.sleep(100)
+                }
+                var status = ""
+                scenario.onActivity { status = "${field("scannerUnavailableReason").get(it)}; ${(field("scannerStatus").get(it) as? TextView)?.text}" }
+                assertTrue("$message: $status", ready)
+            }
+            scenario.onActivity { click(it, "Explore"); click(it, "Scan") }
+            awaitState("Back camera must bind for aligned reading") { field("scannerBound").getBoolean(it) }
+            scenario.onActivity { click(it, "Read aligned sign") }
+            awaitState("A real analysis frame must reach OCR") { field("snapshotBitmap").get(it) != null && field("snapshotText").get(it) != null }
+            scenario.onActivity { activity ->
+                assertHasText(activity, "Captured sign only")
+                click(activity, "Resume camera / reselect")
+                assertEquals(null, field("lastScannerDecision").get(activity))
+                click(activity, "Try checked sign detector")
+            }
+            awaitState("Checked packaged detector must load with preview") {
+                field("scannerBound").getBoolean(it) && field("scannerModelHash").get(it) == "e4aa74020c03cb4dbeef80cf54eb261eae95d3860235a84897dd9c47d574bdb2"
+            }
+            scenario.onActivity { activity ->
+                assertHasText(activity, "Select centered sign")
+                activity.onModelUnavailable("Test detector unavailable")
+                assertHasText(activity, "Test detector unavailable")
+                assertTrue(descendants(activity.findViewById(R.id.app_root)).any { it is androidx.camera.view.PreviewView })
+                click(activity, "Use aligned snapshot")
+            }
+            awaitState("Aligned reading must recover") { field("scannerBound").getBoolean(it) && !field("scannerUsesDetector").getBoolean(it) }
         }
     }
 

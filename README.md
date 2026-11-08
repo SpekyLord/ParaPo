@@ -20,7 +20,7 @@ ParaPo lets someone choose two places and see which of the supported jeepney rou
 | | What works |
 | --- | --- |
 | **Plan** | Choose a start and destination manually. See eligible directions for Routes 3 and 10. |
-| **Scan** | Open a live **back-camera** preview after granting camera permission. Preview works independently of route-sign recognition. |
+| **Scan** | Use the **back camera** to read a frozen aligned crop, or explicitly try the experimental checked sign detector. Manual planning stays available. |
 | **Explore** | Browse the supported route catalog without selecting a journey. |
 | **Map** | Pan and zoom street maps in Results and Route Details; select a route to highlight its path and journey stops. |
 
@@ -31,7 +31,7 @@ ParaPo lets someone choose two places and see which of the supported jeepney rou
 ### Demo status
 
 - **Camera preview:** works on the Tecno KJ8 and uses its back-facing camera. Camera permission is requested only when opening Scan. Frames stay on the device.
-- **Recognition:** unavailable. The latest experimental ONNX export does not match its PyTorch reference, so ParaPo does not show sign detections or compatibility decisions. Manual planning and route details remain available.
+- **Recognition:** aligned snapshot reading is the default. **Try checked sign detector** enables the experimental v10 detector with sign selection and observed-vehicle direction confirmation. Same-input PyTorch/ONNX/Tecno parity passes on three development photos; roadside accuracy is unverified. ML Kit recovered correct codes from 4 of 9 labeled diagnostic crops; several legible crops remained unreadable. See [scanner evidence](docs/evidence/m4/scanner-2026-11-08.md).
 - **Map:** MapLibre Native renders OpenFreeMap Liberty tiles, with streets and place labels. Fresh tiles need internet; a Retry action appears when the map cannot load.
 - **Coverage:** only the Jaro Plaza–WVSU corridor on Routes 3 and 10, in four directional patterns. Dashed amber joins are unresolved source-map sections, not verified roads.
 
@@ -107,15 +107,19 @@ Current dataset: `iloilo-jaro-wvsu-2026-11-08` (four directional patterns). On a
 
 ## Recognition experiment
 
-Recognition is kept off until the current model passes export parity. The latest v10 validation used only three photos; there is no v10 test-set inference, and the ONNX/PyTorch outputs differ. See [M3 results](docs/evidence/m3/results-2026-11-07.md) and [M4 implementation notes](docs/evidence/m4/implementation-2026-11-07.md).
+The [Nov. 9 OCR investigation](docs/evidence/m4/ocr-2026-11-09.md) compared crop padding, contrast, and character width on the Tecno. General preprocessing was not adopted because it regressed other saved signs. The shared reader now pads only inputs smaller than ML Kit's 32-pixel minimum, preventing a tiny crop from taking the recognition-failure path; it does not invent readable text.
 
-An ignored local model asset is optional for building the manual planner and live camera preview. To include the experimental model in a local build, copy the reviewed export:
+The v10 model's recorded desktop discrepancy came from rectangular versus square inputs. Android's former Skia resize also differed from desktop OpenCV. Shared pixel-center bilinear preparation now produces exactly equal tensors on the Tecno, and decoded predictions pass the original 1.5px/0.02 parity limits on validation photos 28, 32, and 34. The detector still found only 2/3 signs with two false detections on these repeatedly inspected photos. No new training or test-set inference was run.
+
+The default scanner uses **Aim -> Read aligned sign -> frozen crop**. Resume/reselect discards prior evidence. **Try checked sign detector** uses explicit sign selection and asks for the selected observed vehicle's direction when the text does not establish it. Two frames and overlap association do not prove physical ownership. Read [current evidence and diagnostic instructions](docs/evidence/m4/scanner-2026-11-08.md) before making performance claims.
+
+An ignored local model asset remains optional for building preview, aligned OCR, and the manual planner. The checked experimental artifact is:
 
 ```powershell
-Copy-Item datasets\m3-samples\runs\yolov8n-reviewed-20ep\weights\best.onnx app\src\main\assets\route-sign-yolov8n.onnx
+Copy-Item datasets\m3-samples\runs\yolov8n-v10-320-20ep\weights\best.onnx app\src\main\assets\route-sign-yolov8n.onnx
 ```
 
-Expected SHA-256: `183a212b84273fc58870bf4dfd10bb76f52cecabf9e0c7ac5b8f1d01563116d8`. Keep the recorded parity checks; do not loosen thresholds to make the export appear ready.
+Expected SHA-256: `e4aa74020c03cb4dbeef80cf54eb261eae95d3860235a84897dd9c47d574bdb2`. Older failed comparisons remain preserved; tolerances and thresholds were not relaxed. Missing or invalid detector assets leave preview, aligned reading, and manual planning available. Research images are excluded from normal APKs. The diagnostic screen is compiled only with `-PparapoIsolatedUiTest`; fixtures are transferred separately.
 
 ## Project notes
 
@@ -123,4 +127,4 @@ Expected SHA-256: `183a212b84273fc58870bf4dfd10bb76f52cecabf9e0c7ac5b8f1d0156311
 - [Product requirements](docs/PRD.md) · [Research brief](docs/research-brief.md) · [Phase task tracker](docs/phasetask.md)
 - [Route source maps and geometry gaps](docs/evidence/m2/source-maps/README.md) · [Phone screenshots and acceptance results](docs/evidence/m2/map-camera-2026-11-08.md)
 
-ParaPo is a classroom prototype, not a production transit or navigation service. Schedules, transfers, other Iloilo routes, complete route geometry, sign recognition, and complete offline map coverage are outside the current demo.
+ParaPo is a classroom prototype, not a production transit or navigation service. Schedules, transfers, other Iloilo routes, complete route geometry, reliable live-roadside recognition, and complete offline map coverage are outside the demonstrated claims.

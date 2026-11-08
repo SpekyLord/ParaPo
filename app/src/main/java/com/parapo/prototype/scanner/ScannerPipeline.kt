@@ -2,19 +2,13 @@ package com.parapo.prototype.scanner
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
-import android.graphics.Paint
-import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
@@ -30,19 +24,21 @@ import kotlin.math.roundToInt
 class ScannerPipeline(
     context: Context,
     private val listener: Listener,
+    private val enableDetector: Boolean = false,
 ) : AutoCloseable {
     interface Listener {
         fun onModelReady(modelHash: String)
         fun onModelUnavailable(reason: String)
         fun onDetections(sessionId: Long, contextKey: String, boxes: List<SignBox>, selectedBox: SignBox?, targetId: String?, captureElapsedMs: Long, frameWidth: Int, frameHeight: Int)
         fun onText(sessionId: Long, contextKey: String, targetId: String, captureElapsedMs: Long, text: String)
-        fun onFailure()
+        fun onFailure(sessionId: Long, contextKey: String, targetId: String?)
+        fun onSnapshot(sessionId: Long, contextKey: String, targetId: String, crop: Bitmap) { crop.recycle() }
     }
 
     private val appContext = context.applicationContext
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    private val recognizer = SignTextReader()
     private val target = SingleSignTarget()
     private val busy = AtomicBoolean(false)
     @Volatile private var closed = false
@@ -53,9 +49,15 @@ class ScannerPipeline(
     @Volatile private var outputName = ""
     @Volatile private var activeSessionId = 0L
     @Volatile private var activeContextKey = ""
+    @Volatile private var snapshotRequest: SignBox? = null
+    @Volatile private var snapshotFrozen = false
 
     init {
         executor.execute {
+            if (!enableDetector) {
+                loading = false
+                return@execute
+            }
             try {
                 val model = appContext.assets.open(MODEL_ASSET).use { it.readBytes() }
                 modelHash = MessageDigest.getInstance("SHA-256").digest(model)
@@ -80,6 +82,7 @@ class ScannerPipeline(
 
     fun setAnalyzer(analysis: ImageAnalysis) = analysis.setAnalyzer(executor, analyzer())
 
+    @Synchronized
     fun updateContext(sessionId: Long, contextKey: String) {
         activeSessionId = sessionId
         activeContextKey = contextKey
@@ -112,28 +115,68 @@ class ScannerPipeline(
     fun clearTarget() = target.clear()
 
     @Synchronized
+    fun requestAlignedRead(region: SignBox): String {
+        require(region.left >= 0f && region.top >= 0f && region.right <= 1f && region.bottom <= 1f && region.area > 0f)
+        check(!closed && !snapshotFrozen && snapshotRequest == null)
+        val id = target.select(region)
+        snapshotRequest = region
+        return id
+    }
+
+    @Synchronized
+    fun resumeAlignedPreview() {
+        snapshotRequest = null
+        snapshotFrozen = false
+        target.clear()
+    }
+
+    @Synchronized
     fun currentTargetBox(): SignBox? = target.selectedBox
 
     private fun analyze(image: ImageProxy) {
-        if (closed || loading || session == null || !busy.compareAndSet(false, true)) {
+        if (closed || loading || snapshotFrozen || (!enableDetector && snapshotRequest == null) ||
+            (enableDetector && session == null) || !busy.compareAndSet(false, true)) {
             image.close()
             return
         }
         val captureElapsedMs = SystemClock.elapsedRealtime()
-        val callbackSession = activeSessionId
-        val callbackContext = activeContextKey
+        val callbackSession: Long
+        val callbackContext: String
+        var callbackTarget: String?
+        val region: SignBox?
+        synchronized(this) {
+            callbackSession = activeSessionId
+            callbackContext = activeContextKey
+            callbackTarget = target.selectedId
+            region = snapshotRequest
+            snapshotRequest = null
+            if (region != null) snapshotFrozen = true
+        }
+        if (!enableDetector && region == null) {
+            image.close()
+            busy.set(false)
+            return
+        }
         var frame: Bitmap? = null
         var imageClosed = false
         var selectedCrop: Bitmap? = null
         try {
             frame = uprightBitmap(image)
-            val detections = infer(frame)
+            val detections = if (region == null) infer(frame) else emptyList()
             val boxes = detections.map(SignDetection::box)
             val frameWidth = frame.width
             val frameHeight = frame.height
-            val (selectedBox, targetId) = synchronized(this) { target.selectedBox?.let { target.associate(boxes) to target.selectedId } ?: (null to null) }
-            mainHandler.post {
-                if (!closed) listener.onDetections(callbackSession, callbackContext, boxes, selectedBox, targetId, captureElapsedMs, frameWidth, frameHeight)
+            val (selectedBox, targetId) = synchronized(this) {
+                if (region != null) {
+                    SignBox(region.left * frameWidth, region.top * frameHeight, region.right * frameWidth, region.bottom * frameHeight) to callbackTarget
+                } else if (target.selectedId != callbackTarget) null to callbackTarget
+                else target.selectedBox?.let { target.associate(boxes) to target.selectedId } ?: (null to null)
+            }
+            callbackTarget = targetId
+            if (region == null) mainHandler.post {
+                if (!closed && synchronized(this) { target.selectedId } == targetId) {
+                    listener.onDetections(callbackSession, callbackContext, boxes, selectedBox, targetId, captureElapsedMs, frameWidth, frameHeight)
+                }
             }
             selectedCrop = selectedBox?.let { crop(frame, it) }
             frame.recycle()
@@ -147,15 +190,22 @@ class ScannerPipeline(
             }
             val cropForOcr = requireNotNull(selectedCrop)
             selectedCrop = null
+            if (region != null) {
+                val displayCrop = cropForOcr.copy(Bitmap.Config.ARGB_8888, false)
+                mainHandler.post {
+                    if (!closed) listener.onSnapshot(callbackSession, callbackContext, targetId, displayCrop)
+                    else displayCrop.recycle()
+                }
+            }
             try {
-                recognizer.process(InputImage.fromBitmap(cropForOcr, 0))
+                recognizer.read(cropForOcr)
                     .addOnSuccessListener { result ->
                         if (!closed) mainHandler.post {
                             if (!closed) listener.onText(callbackSession, callbackContext, targetId, captureElapsedMs, result.text)
                         }
                     }
                     .addOnFailureListener {
-                        if (!closed) mainHandler.post { if (!closed) listener.onFailure() }
+                        if (!closed) mainHandler.post { if (!closed) listener.onFailure(callbackSession, callbackContext, targetId) }
                     }
                     .addOnCompleteListener {
                         cropForOcr.recycle()
@@ -170,7 +220,7 @@ class ScannerPipeline(
             selectedCrop?.recycle()
             if (!imageClosed) image.close()
             busy.set(false)
-            mainHandler.post { if (!closed) listener.onFailure() }
+            mainHandler.post { if (!closed) listener.onFailure(callbackSession, callbackContext, callbackTarget) }
         }
     }
 
@@ -190,28 +240,38 @@ class ScannerPipeline(
 
     internal fun runDetectorForEvaluation(frame: Bitmap): List<SignDetection> = infer(frame)
 
-    private fun floatInput(frame: Bitmap): FloatArray {
-        val scale = min(INPUT_SIZE.toFloat() / frame.width, INPUT_SIZE.toFloat() / frame.height)
+    internal fun floatInput(frame: Bitmap): FloatArray {
+        val scale = min(INPUT_SIZE.toDouble() / frame.width, INPUT_SIZE.toDouble() / frame.height)
         val resizedWidth = (frame.width * scale).roundToInt()
         val resizedHeight = (frame.height * scale).roundToInt()
         val left = (INPUT_SIZE - resizedWidth) / 2
         val top = (INPUT_SIZE - resizedHeight) / 2
-        val resized = Bitmap.createBitmap(INPUT_SIZE, INPUT_SIZE, Bitmap.Config.ARGB_8888)
-        val pixels = try {
-            Canvas(resized).apply {
-                drawColor(Color.rgb(114, 114, 114))
-                drawBitmap(frame, null, Rect(left, top, left + resizedWidth, top + resizedHeight), Paint(Paint.FILTER_BITMAP_FLAG))
+        val source = IntArray(frame.width * frame.height)
+        frame.getPixels(source, 0, frame.width, 0, 0, frame.width, frame.height)
+        val plane = INPUT_SIZE * INPUT_SIZE
+        val tensor = FloatArray(3 * plane) { 114f / 255f }
+        // Explicit pixel-center bilinear sampling is shared with the desktop probe; Skia/OpenCV differ.
+        for (row in 0 until resizedHeight) {
+            val y = (row + 0.5) * frame.height / resizedHeight - 0.5
+            val y0 = kotlin.math.floor(y).toInt()
+            val dy = y - y0
+            for (column in 0 until resizedWidth) {
+                val x = (column + 0.5) * frame.width / resizedWidth - 0.5
+                val x0 = kotlin.math.floor(x).toInt()
+                val dx = x - x0
+                val a = source[y0.coerceIn(0, frame.height - 1) * frame.width + x0.coerceIn(0, frame.width - 1)]
+                val b = source[y0.coerceIn(0, frame.height - 1) * frame.width + (x0 + 1).coerceIn(0, frame.width - 1)]
+                val c = source[(y0 + 1).coerceIn(0, frame.height - 1) * frame.width + x0.coerceIn(0, frame.width - 1)]
+                val d = source[(y0 + 1).coerceIn(0, frame.height - 1) * frame.width + (x0 + 1).coerceIn(0, frame.width - 1)]
+                for (channel in 0..2) {
+                    val shift = 16 - channel * 8
+                    fun component(pixel: Int) = ((pixel shr shift) and 255).toDouble()
+                    val upper = component(a) * (1 - dx) + component(b) * dx
+                    val lower = component(c) * (1 - dx) + component(d) * dx
+                    val value = kotlin.math.floor(upper * (1 - dy) + lower * dy + 0.5).toInt().coerceIn(0, 255)
+                    tensor[channel * plane + (row + top) * INPUT_SIZE + column + left] = value / 255f
+                }
             }
-            IntArray(INPUT_SIZE * INPUT_SIZE).also { resized.getPixels(it, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE) }
-        } finally {
-            resized.recycle()
-        }
-        val tensor = FloatArray(3 * pixels.size)
-        for (i in pixels.indices) {
-            val pixel = pixels[i]
-            tensor[i] = Color.red(pixel) / 255f
-            tensor[pixels.size + i] = Color.green(pixel) / 255f
-            tensor[2 * pixels.size + i] = Color.blue(pixel) / 255f
         }
         return tensor
     }
@@ -293,14 +353,14 @@ class ScannerPipeline(
             session = null
             executor.shutdown()
         }
-        target.clear()
+        synchronized(this) { target.clear() }
     }
 
     companion object {
         const val MODEL_ASSET = "route-sign-yolov8n.onnx"
-        const val MODEL_VERSION = "YOLOv8n fine-tuned M3 demo-v3; provisional"
+        const val MODEL_VERSION = "YOLOv8n M3 v10; experimental development model"
         const val RUNTIME_VERSION = "ONNX Runtime Android 1.31.1"
-        const val OCR_VERSION = "ML Kit bundled Latin 16.0.1"
+        const val OCR_VERSION = SignTextReader.VERSION
         private const val INPUT_SIZE = 320
     }
 }

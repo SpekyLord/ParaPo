@@ -5,6 +5,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Bitmap
 import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -26,16 +27,20 @@ import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.ImageView
 import java.util.Locale
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.UseCaseGroup
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import org.maplibre.android.camera.CameraPosition
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.doOnLayout
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -107,6 +112,11 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     private var scannerUnavailableReason: String? = null
     private var scannerPermissionInFlight = false
     private var scannerPipeline: ScannerPipeline? = null
+    private var snapshotImage: ImageView? = null
+    private var snapshotBitmap: Bitmap? = null
+    private var snapshotText: String? = null
+    private var snapshotPending = false
+    private var scannerUsesDetector = false
     private var cameraProvider: ProcessCameraProvider? = null
     private var routeMap: RouteStreetMapView? = null
     private var selectedPathButton: Button? = null
@@ -135,6 +145,7 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
             val active = lastScannerDecision
             if (screen != Screen.SCANNER || active == null) return
             if (temporalTracker.current(android.os.SystemClock.elapsedRealtime()) == null) {
+                clearScannerEvidence()
                 lastScannerDecision = null
                 updateScannerStatus("? Result expired — select one sign again", Color.GRAY)
                 renderScannerActions(null)
@@ -615,9 +626,9 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         ))
         addAboutSection("App and scanner", listOf(
             "App version: ${BuildConfig.VERSION_NAME}",
-            "Camera preview is available independently. Recognition remains unavailable because ONNX export parity failed. Manual planning remains available.",
+            "Camera preview and aligned snapshot reading are independent of the detector. The experimental detector passed same-input phone parity on three development photos; live accuracy remains unverified.",
             "Recognition model: ${if (modelAvailable) ScannerPipeline.MODEL_VERSION else "Unavailable — local model asset missing"}",
-            "Model check: latest v10 validation used three photos; export parity failed and no v10 test-set inference ran. Recognition is disabled.",
+            "Model check: v10 square-input PyTorch/ONNX/Android parity passes on three development photos. Live roadside accuracy and ownership remain unverified.",
             "Model SHA-256: ${if (modelAvailable) EXPECTED_MODEL_HASH else "not available"}",
             "Inference runtime: ${ScannerPipeline.RUNTIME_VERSION}",
             "Offline OCR: ${ScannerPipeline.OCR_VERSION}",
@@ -642,9 +653,11 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
 
     private fun renderScanner() {
         addHeading("Scan a route sign")
+        addBody(if (scannerUsesDetector) "Experimental detector: select one sign outline. Confirm direction for that observed vehicle. Reselect after overlap or target loss."
+        else "Aligned snapshot: aim at one sign inside the rectangle, then tap Read aligned sign. A captured image does not track a moving vehicle.")
         addBody(if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            "Camera preview is available. Route recognition is currently unavailable, so use the route cards and stops below."
-        } else "Allow camera access to preview a sign. Route recognition is currently unavailable; manual planning works without camera access.")
+            "Camera preview is available. Automatic sign detection is experimental. Read an aligned snapshot, try the checked detector, or use manual planning."
+        } else "Allow camera access to preview and read an aligned sign. Experimental recognition needs camera access; manual planning works without it.")
         if (scannerNeutral) addBody(if (scannerReturnScreen == Screen.RESULTS) "Your trip is saved. Scan results won't assume a route." else "No trip is selected. Browse routes to see their stops.")
         else selected?.let { match ->
             val route = catalog.routes.firstOrNull { it.id == match.routeId }
@@ -677,16 +690,28 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
             contentDescription = "Live camera preview. Point at one route sign while stationary."
         }
         previewBox.addView(preview, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        add(previewBox)
+        val overlay = ScannerOverlayView(this).apply {
+            alignedRegion = !scannerUsesDetector
+            contentDescription = "Aligned reading region. Aim at one sign and use Read aligned sign."
+            onSelectBox = ::selectScannerTarget
+        }
+        previewBox.addView(overlay, FrameLayout.LayoutParams(-1, -1))
+        snapshotImage = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            visibility = View.GONE
+            contentDescription = "Frozen aligned sign crop, not a live vehicle"
+        }
+        previewBox.addView(snapshotImage, FrameLayout.LayoutParams(-1, -1))
+        content.addView(previewBox, params.apply { bottomMargin = dp(8) })
         scannerPreview = preview
-        scannerOverlay = null
+        scannerOverlay = overlay
         if (scannerUnavailableReason != null) {
             updateScannerStatus(scannerUnavailableReason!!, Color.GRAY)
             addButton("Try camera again") { scannerUnavailableReason = null; scannerBound = false; startScannerCamera() }
         }
         scannerActions = verticalContainer()
         content.addView(scannerActions)
-        addScannerManualActions()
+        renderScannerActions(null)
         if (!scannerStarting && !scannerBound) startScannerCamera()
     }
 
@@ -751,6 +776,22 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     private fun renderScannerActions(decision: ScannerDecision?) {
         val actions = scannerActions ?: return
         actions.removeAllViews()
+        if (!scannerUsesDetector && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            if (snapshotBitmap != null || snapshotPending) {
+                actions.addView(button("Resume camera / reselect") { resumeAlignedScanner() })
+            } else {
+                actions.addView(button("Read aligned sign") { readAlignedScanner() }.apply { isEnabled = scannerBound && scannerPipeline != null })
+            }
+        } else if (scannerPipeline != null && scannerUnavailableReason == null) {
+            actions.addView(button("Select centered sign") { selectCenteredScannerTarget() })
+        }
+        if (AUTOMATIC_RECOGNITION_CHECKED && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            actions.addView(button(if (scannerUsesDetector) "Use aligned snapshot" else "Try checked sign detector") {
+                stopScannerResources()
+                scannerUsesDetector = !scannerUsesDetector
+                render()
+            })
+        }
         if (decision?.kind == DecisionKind.CONFIRM_DIRECTION && decision.routeId != null && !scannerNeutral) {
             catalog.patterns.filter {
                 it.routeId == decision.routeId && it.active && it.verificationStatus == VerificationStatus.VERIFIED
@@ -763,8 +804,11 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
                     scannerTargetId?.let(temporalTracker::selectTarget)
                     scannerPipeline?.updateContext(scannerSessionId, scannerContextKey)
                     lastScannerDecision = null
-                    updateScannerStatus("Direction confirmation applies to this selected sign. Reading it again…", Color.GRAY)
+                    updateScannerStatus("Direction confirmation applies to this selected observed vehicle.", Color.GRAY)
                     scannerHandler.removeCallbacks(scannerExpiry)
+                    if (snapshotBitmap != null) snapshotText?.let {
+                        onText(scannerSessionId, scannerContextKey, scannerTargetId ?: return@button, android.os.SystemClock.elapsedRealtime(), it)
+                    }
                 })
             }
         }
@@ -790,6 +834,7 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
 
     private fun openScanner(neutral: Boolean, returnTo: Screen) {
         if (screen == Screen.SCANNER) stopScannerResources()
+        scannerUsesDetector = false
         scannerNeutral = neutral
         scannerReturnScreen = returnTo
         scanReturnLabel = scannerReturnLabel(returnTo)
@@ -836,6 +881,10 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
 
     private fun startScannerCamera() {
         val previewView = scannerPreview ?: return
+        if (previewView.width == 0 || previewView.height == 0) {
+            previewView.doOnLayout { if (scannerPreview === previewView && screen == Screen.SCANNER) startScannerCamera() }
+            return
+        }
         if (screen != Screen.SCANNER || scannerStarting || scannerBound ||
             checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
         ) return
@@ -855,13 +904,33 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
             try {
                 val provider = providerFuture.get()
                 val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
-                provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview)
+                val pipeline = ScannerPipeline(this, this, enableDetector = scannerUsesDetector)
+                scannerPipeline = pipeline
+                scannerContextKey = contextKey()
+                pipeline.updateContext(scannerSessionId, scannerContextKey)
+                val analysis = ImageAnalysis.Builder()
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
+                pipeline.setAnalyzer(analysis)
+                val group = UseCaseGroup.Builder().addUseCase(preview).addUseCase(analysis)
+                previewView.viewPort?.let(group::setViewPort)
+                try {
+                    provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, group.build())
+                } catch (_: Exception) {
+                    pipeline.close()
+                    scannerPipeline = null
+                    provider.unbind(preview, analysis)
+                    provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview)
+                }
                 cameraProvider = provider
                 scannerBound = true
                 scannerStarting = false
                 scannerUnavailableReason = null
-                updateScannerStatus("Camera ready. Route recognition is currently unavailable.", Color.GRAY)
-            } catch (_: Exception) {
+                updateScannerStatus(if (scannerPipeline != null) "Camera ready. ${if (scannerUsesDetector) "Select one detected sign." else "Align one sign and tap Read aligned sign."}" else "Camera preview ready. Sign reading unavailable; manual planning remains available.", Color.GRAY)
+                renderScannerActions(null)
+            } catch (error: Exception) {
+                android.util.Log.e("ParaPoCamera", "Camera binding failed", error)
+                scannerPipeline?.close()
+                scannerPipeline = null
                 scannerStarting = false
                 scannerUnavailableReason = "Camera is unavailable or already in use. You can retry or keep planning manually."
                 updateScannerStatus(scannerUnavailableReason!!, Color.GRAY)
@@ -928,6 +997,7 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         cameraProvider = null
         scannerPipeline?.close()
         scannerPipeline = null
+        clearFrozenSnapshot()
         scannerStarting = false
         scannerBound = false
         scannerHandler.removeCallbacks(scannerExpiry)
@@ -949,6 +1019,65 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         scannerOverlay = null
         scannerStatus = null
         scannerActions = null
+    }
+
+    private fun clearFrozenSnapshot() {
+        snapshotImage?.setImageDrawable(null)
+        snapshotImage?.visibility = View.GONE
+        snapshotBitmap?.recycle()
+        snapshotBitmap = null
+        snapshotText = null
+        snapshotPending = false
+        scannerPreview?.visibility = View.VISIBLE
+        scannerOverlay?.visibility = View.VISIBLE
+    }
+
+    private fun clearScannerEvidence() {
+        userConfirmedRouteId = null
+        userConfirmedPatternId = null
+        lastScannerDecision = null
+        scannerTargetId = null
+        scannerSelectedBox = null
+        scannerOverlay?.update(scannerBoxes, null, scannerFrameWidth, scannerFrameHeight)
+        scannerPipeline?.clearTarget()
+        scannerContextKey = contextKey()
+        scannerSessionId = temporalTracker.beginSession(scannerContextKey)
+        scannerPipeline?.updateContext(scannerSessionId, scannerContextKey)
+        scannerHandler.removeCallbacks(scannerExpiry)
+    }
+
+    private fun resumeAlignedScanner() {
+        clearScannerEvidence()
+        clearFrozenSnapshot()
+        scannerPipeline?.resumeAlignedPreview()
+        updateScannerStatus("Align one sign, then tap Read aligned sign.", Color.GRAY)
+        renderScannerActions(null)
+    }
+
+    private fun readAlignedScanner() {
+        val pipeline = scannerPipeline ?: return
+        clearScannerEvidence()
+        pipeline.resumeAlignedPreview()
+        scannerTargetId = pipeline.requestAlignedRead(ScannerOverlayView.ALIGNED_REGION)
+        temporalTracker.selectTarget(scannerTargetId)
+        snapshotPending = true
+        updateScannerStatus("Capturing aligned sign…", Color.GRAY)
+        renderScannerActions(null)
+    }
+
+    override fun onSnapshot(sessionId: Long, contextKey: String, targetId: String, crop: Bitmap) {
+        if (screen != Screen.SCANNER || !temporalTracker.acceptsCallback(sessionId, contextKey, targetId)) {
+            crop.recycle()
+            return
+        }
+        snapshotPending = false
+        snapshotBitmap = crop
+        snapshotImage?.setImageBitmap(crop)
+        snapshotImage?.visibility = View.VISIBLE
+        scannerPreview?.visibility = View.INVISIBLE
+        scannerOverlay?.visibility = View.INVISIBLE
+        updateScannerStatus("Reading captured sign — this image is frozen.", Color.GRAY)
+        renderScannerActions(null)
     }
 
     private fun contextKey(): String = if (scannerNeutral) "neutral" else listOf(
@@ -973,6 +1102,12 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
 
     override fun onModelReady(modelHash: String) {
         if (screen != Screen.SCANNER || scannerPipeline == null) return
+        if (modelHash != EXPECTED_MODEL_HASH) {
+            onModelUnavailable("Detector identity differs from the checked artifact. Use aligned reading or manual planning.")
+            scannerPipeline?.close()
+            scannerPipeline = null
+            return
+        }
         scannerModelHash = modelHash
         if (screen == Screen.SCANNER && scannerUnavailableReason == null) {
             updateScannerStatus("Experimental detector ready. Tap one sign outline to read it.", Color.DKGRAY)
@@ -1020,7 +1155,8 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
 
     override fun onText(sessionId: Long, contextKey: String, targetId: String, captureElapsedMs: Long, text: String) {
         if (screen != Screen.SCANNER || scannerPipeline == null || !temporalTracker.acceptsCallback(sessionId, contextKey, targetId)) return
-        recognizedCropCount++
+        val firstSnapshotReading = snapshotBitmap != null && snapshotText == null
+        if (snapshotBitmap == null || firstSnapshotReading) recognizedCropCount++
         val routeResolution = ScannerDecisions.routeFromText(text, catalog)
         val routeId = (routeResolution as? RouteTextResolution.Found)?.routeId
         val matchedPatterns = routeId?.let { ScannerDecisions.patternFromHeadsign(it, text, catalog) }.orEmpty()
@@ -1051,15 +1187,19 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
             scannerNeutral,
             text,
         )
-        if (temporalTracker.observe(observationSession, observationContext, targetId, captureElapsedMs, decision)) {
+        val snapshot = snapshotBitmap != null
+        if (snapshot) snapshotText = text
+        if (snapshot || temporalTracker.observe(observationSession, observationContext, targetId, captureElapsedMs, decision)) {
             lastScannerDecision = decision
-            val latency = (android.os.SystemClock.elapsedRealtime() - captureElapsedMs).coerceAtLeast(0)
-            if (decisionLatenciesMs.size == MAX_RECORDED_LATENCIES) decisionLatenciesMs.removeAt(0)
-            decisionLatenciesMs += latency
-            updateScannerStatus(decisionDescription(decision), decisionColor(decision.kind))
+            if (!snapshot || firstSnapshotReading) {
+                val latency = (android.os.SystemClock.elapsedRealtime() - captureElapsedMs).coerceAtLeast(0)
+                if (decisionLatenciesMs.size == MAX_RECORDED_LATENCIES) decisionLatenciesMs.removeAt(0)
+                decisionLatenciesMs += latency
+            }
+            updateScannerStatus((if (snapshot) "Captured sign only — not a live vehicle\nML Kit: ${text.ifEmpty { "EMPTY" }}\n" else "") + decisionDescription(decision), decisionColor(decision.kind))
             renderScannerActions(decision)
             scannerHandler.removeCallbacks(scannerExpiry)
-            scannerHandler.postDelayed(scannerExpiry, ScannerSettings().freshnessMs + 10)
+            if (!snapshot) scannerHandler.postDelayed(scannerExpiry, ScannerSettings().freshnessMs + 10)
         } else if (temporalTracker.current(captureElapsedMs) == null) {
             lastScannerDecision = null
             scannerHandler.removeCallbacks(scannerExpiry)
@@ -1068,11 +1208,17 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         }
     }
 
-    override fun onFailure() {
-        if (screen != Screen.SCANNER || scannerPipeline == null) return
-        temporalTracker.invalidate()
-        lastScannerDecision = null
-        showScannerUnavailable("Inference failed. Return to manual planning and try again later.")
+    override fun onFailure(sessionId: Long, contextKey: String, targetId: String?) {
+        if (screen != Screen.SCANNER || scannerPipeline == null || sessionId != scannerSessionId ||
+            contextKey != scannerContextKey || targetId != scannerTargetId) return
+        val snapshot = snapshotBitmap != null || snapshotPending
+        clearScannerEvidence()
+        if (snapshot) {
+            snapshotPending = false
+            snapshotText = null
+            updateScannerStatus("ERROR: Could not read captured sign. Resume the camera and try again.", Color.GRAY)
+            renderScannerActions(null)
+        } else showScannerUnavailable("Recognition failed. Camera preview and manual planning remain available.")
     }
 
     private fun decisionDescription(decision: ScannerDecision): String = buildString {
@@ -1098,9 +1244,9 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         fun percentile(value: Double): Long? = sorted.takeIf { it.isNotEmpty() }?.let {
             it[((it.size - 1) * value).toInt().coerceIn(0, it.lastIndex)]
         }
-        val exportedModelHash = if (modelAssetAvailable()) scannerModelHash.ifBlank { EXPECTED_MODEL_HASH } else null
+        val exportedModelHash = scannerModelHash.ifBlank { null }
         val modelHashJson = exportedModelHash?.let { "\"$it\"" } ?: "null"
-        val summary = """{"schema_version":1,"app_version":"${BuildConfig.VERSION_NAME}","dataset_version":"${catalog.info.datasetVersion}","model_version":"${ScannerPipeline.MODEL_VERSION}","model_sha256":$modelHashJson,"runtime":"${ScannerPipeline.RUNTIME_VERSION}","ocr":"${ScannerPipeline.OCR_VERSION}","settings":"${ScannerSettings().version}","analyzed_frames":$analyzedFrameCount,"recognized_crops":$recognizedCropCount,"latency_samples":${decisionLatenciesMs.size},"capture_to_display_median_ms":${percentile(0.5) ?: "null"},"capture_to_display_p95_ms":${percentile(0.95) ?: "null"}}"""
+        val summary = """{"schema_version":2,"measurement_boundary":"analyzer entry to status update; excludes capture and render presentation","app_version":"${BuildConfig.VERSION_NAME}","dataset_version":"${catalog.info.datasetVersion}","model_version":"${ScannerPipeline.MODEL_VERSION}","model_sha256":$modelHashJson,"runtime":"${ScannerPipeline.RUNTIME_VERSION}","ocr":"${ScannerPipeline.OCR_VERSION}","settings":"${ScannerSettings().version}","analyzed_frames":$analyzedFrameCount,"recognized_crops":$recognizedCropCount,"latency_samples":${decisionLatenciesMs.size},"analyzer_entry_to_ui_update_median_ms":${percentile(0.5) ?: "null"},"analyzer_entry_to_ui_update_p95_ms":${percentile(0.95) ?: "null"}}"""
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, summary)
@@ -1281,6 +1427,7 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     private enum class Screen { HOME, SEARCH, RESULTS, NO_ROUTE, DETAILS, EXPLORE, ABOUT, SCANNER }
 
     companion object {
+        private const val AUTOMATIC_RECOGNITION_CHECKED = true
         private const val KEY_ORIGIN_TEXT = "origin_text"
         private const val KEY_DESTINATION_TEXT = "destination_text"
         private const val KEY_ORIGIN_ID = "origin_id"
@@ -1302,7 +1449,7 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         private const val EXPLORE_LIST_TAG = "explore-list"
         private const val LOCATION_LIST_TAG = "location-list"
         private const val MAX_RECORDED_LATENCIES = 100
-        private const val EXPECTED_MODEL_HASH = "183a212b84273fc58870bf4dfd10bb76f52cecabf9e0c7ac5b8f1d01563116d8"
+        private const val EXPECTED_MODEL_HASH = "e4aa74020c03cb4dbeef80cf54eb261eae95d3860235a84897dd9c47d574bdb2"
         private const val PREFS_SCANNER = "scanner_permissions"
         private const val KEY_CAMERA_ASKED = "camera_asked"
     }

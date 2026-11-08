@@ -8,12 +8,33 @@ import sys
 from pathlib import Path
 
 import experiment
+from route_text import interpret, canonical_truth
 
 
-def matched_truth_text(box, signs, iou_threshold=0.5):
-    best = max(((experiment.box_iou(box, sign["box"]), sign) for sign in signs),
-               default=(0, None), key=lambda item: item[0])
-    return best[1].get("visible_text", "") if best[1] is not None and best[0] >= iou_threshold else ""
+def match_signs(detections, signs, iou_threshold=0.5):
+    """Assign each labeled sign at most once; extra detector crops retain no truth."""
+    used, matches = set(), {}
+    for index in sorted(range(len(detections)), key=lambda i: (-detections[i]["score"], i)):
+        best = max(((experiment.box_iou(detections[index]["box"], sign["box"]), j)
+                    for j, sign in enumerate(signs) if j not in used), default=(0, -1))
+        if best[0] >= iou_threshold:
+            matches[index] = best[1]
+            used.add(best[1])
+    return matches
+
+
+def ocr_record(sample_id, source, box, text, sign=None, sign_index=None):
+    prediction = interpret(text)
+    truth_text = sign.get("visible_text", "") if sign else ""
+    known = bool(sign and truth_text.strip() and sign.get("transcription_status") != "uncertain")
+    truth_codes = interpret(truth_text)["printed_codes"] if known and sign.get("route_id") else None
+    return {"schema_version": 2, "sample_id": sample_id, "crop_source": source, "crop_box": box,
+            "matched_sign_index": sign_index, "truth_match_status": "matched" if sign else "unmatched",
+            "truth_text": truth_text, "truth_text_known": known, "predicted_text": text,
+            "truth_printed_codes": truth_codes,
+            "truth_canonical_route_id": canonical_truth(sign.get("route_id")) if sign else None,
+            "truth_route_label": sign.get("route_id") if sign else None,
+            **prediction}
 
 
 def valid_score_threshold(value):
@@ -50,7 +71,7 @@ def run(args):
         raise experiment.InvalidInput("manifest differs from frozen split")
 
     output = Path(args.output_dir)
-    splits = selected_splits(getattr(args, "split", "both"))
+    splits = selected_splits(args.split)
     ocr_split = "test" if "test" in splits else splits[0]
     targets = [output / f"predictions-{split}.jsonl" for split in splits]
     targets.append(output / f"ocr-{ocr_split}.jsonl")
@@ -64,6 +85,7 @@ def run(args):
         import easyocr
         import torch
         from ultralytics import YOLO
+        from check_export_parity import prepare_input, source_box
     except ImportError as exc:
         raise experiment.InvalidInput("install the pinned Ultralytics, EasyOCR, OpenCV, and PyTorch packages") from exc
 
@@ -76,9 +98,16 @@ def run(args):
             image = (root / sample.get("image_ref", "")).resolve()
             if not image.is_relative_to(root) or not image.is_file():
                 raise experiment.InvalidInput("sample image reference is invalid")
-            result = model.predict(source=str(image), imgsz=320, conf=0.001, iou=0.7,
+            pixels = cv2.imread(str(image))
+            if pixels is None:
+                raise experiment.InvalidInput("cannot decode detector sample")
+            tensor = torch.from_numpy(prepare_input(pixels))
+            result = model.predict(source=tensor, imgsz=320, rect=False, conf=0.001, iou=0.7,
                                   max_det=300, device=args.device, verbose=False)[0]
             detections = normalized_detections(result.boxes)
+            for detection in detections:
+                detection["box"] = source_box(detection["box"], pixels.shape[1], pixels.shape[0])
+            detections = [d for d in detections if experiment.validate_box(d["box"])]
             split_rows.append({"sample_id": sample["sample_id"], "detections": detections})
         predictions[split] = split_rows
 
@@ -91,30 +120,28 @@ def run(args):
         image = cv2.imread(str(image_path))
         if image is None:
             raise experiment.InvalidInput("cannot read sample image for OCR")
-        for sign in sample.get("signs", []):
+        for sign_index, sign in enumerate(sample.get("signs", [])):
             crop_source, box = "ground_truth", sign["box"]
             x1, y1, x2, y2 = (int(round(value)) for value in box)
             crop = image[max(0, y1):min(image.shape[0], y2), max(0, x1):min(image.shape[1], x2)]
             if crop.size == 0:
                 raise experiment.InvalidInput("ground-truth sign crop is empty")
             crop = cv2.resize(crop, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-            text = " ".join(reader.readtext(crop, detail=0, paragraph=True)).strip()
-            ocr_rows.append({"sample_id": sample["sample_id"], "crop_source": crop_source,
-                             "truth_text": sign.get("visible_text", ""), "predicted_text": text,
-                             "truth_route_code": sign.get("route_id"), "predicted_route_code": None})
-        for detection in detection_by_id[sample["sample_id"]]:
-            if detection["score"] < args.score_threshold:
-                continue
+            text = " ".join(reader.readtext(crop, detail=0, paragraph=True))
+            ocr_rows.append(ocr_record(sample["sample_id"], crop_source, box, text, sign, sign_index))
+        selected = [d for d in detection_by_id[sample["sample_id"]] if d["score"] >= args.score_threshold]
+        matched = match_signs(selected, sample.get("signs", []))
+        for detection_index, detection in enumerate(selected):
             box = detection["box"]
             x1, y1, x2, y2 = (int(round(value)) for value in box)
             crop = image[max(0, y1):min(image.shape[0], y2), max(0, x1):min(image.shape[1], x2)]
             if crop.size == 0:
                 raise experiment.InvalidInput("detector sign crop is empty")
             crop = cv2.resize(crop, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-            text = " ".join(reader.readtext(crop, detail=0, paragraph=True)).strip()
-            ocr_rows.append({"sample_id": sample["sample_id"], "crop_source": "detector",
-                             "truth_text": matched_truth_text(box, sample.get("signs", [])),
-                             "predicted_text": text, "truth_route_code": None, "predicted_route_code": None})
+            text = " ".join(reader.readtext(crop, detail=0, paragraph=True))
+            sign_index = matched.get(detection_index)
+            sign = sample["signs"][sign_index] if sign_index is not None else None
+            ocr_rows.append(ocr_record(sample["sample_id"], "detector", box, text, sign, sign_index))
 
     output.mkdir(parents=True, exist_ok=True)
     for split in splits:
@@ -135,7 +162,7 @@ def main(argv=None):
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--device", default="0", help="Ultralytics device; default is CUDA device 0")
-    parser.add_argument("--split", choices=("both", "validation", "test"), default="both",
+    parser.add_argument("--split", choices=("both", "validation", "test"), required=True,
                         help="split(s) to run; use validation to avoid reading held-out test samples")
     parser.add_argument("--score-threshold", type=float, default=0.25,
                         help="validation-selected cutoff for evaluation and detector OCR crops")

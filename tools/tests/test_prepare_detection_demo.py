@@ -11,6 +11,29 @@ import prepare_detection_demo
 
 
 class PrepareDetectionDemoTests(unittest.TestCase):
+    def test_ocr_crops_are_lossless_local_and_do_not_replace_originals(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Local crop preparation uses the existing research environment's Pillow")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.write_fixture(root)
+            Image.new("RGB", (10, 20), (10, 20, 30)).save(root / "images/frame.png")
+            original = (root / "images/frame.png").read_bytes()
+            header, sample = [json.loads(line) for line in manifest.read_text().splitlines()]
+            rows = [header]
+            for number in (18, 21, 24, 27, 28, 31, 32, 34, 38, 39):
+                rows.append({**sample, "sample_id": f"m3-image-{number}"})
+            manifest.write_text("".join(json.dumps(row) + "\n" for row in rows))
+            output = root / "ocr"
+            self.assertEqual(10, prepare_detection_demo.prepare_ocr_crops(manifest, output)["crops"])
+            self.assertEqual(original, (root / "images/frame.png").read_bytes())
+            with Image.open(output / "m3-image-18-0.png") as crop:
+                self.assertEqual((4, 4), crop.size)
+                self.assertEqual((10, 20, 30), crop.getpixel((0, 0)))
+            with self.assertRaises(experiment.InvalidInput):
+                prepare_detection_demo.prepare_ocr_crops(manifest, output)
     def write_fixture(self, root, box=(1, 1, 5, 5)):
         image_dir = root / "images"
         image_dir.mkdir()

@@ -1,5 +1,7 @@
 # M3 research tooling and collection protocol
 
+Current scanner update (2026-11-08): [phone OCR, scoring corrections, and resolved same-input export parity](../m4/scanner-2026-11-08.md). Older failed reports below remain historical evidence. v11 reviews all 40 signs, corrects five transcriptions, and adds six still-image owner-context examples; no new training or test inference ran. Python/Android preparation now shares explicit bilinear sampling, and the helper requires an explicit split. Use `--split validation` during development. The three-detector comparison remains incomplete.
+
 This directory documents the tooling and local demo runs. The ignored local sample folder contains 38 vehicle photos; the two poster graphics are excluded. User review led to nine corrected sign boxes; v10 moves image 30's box another 10px down while keeping the 32/3/3 split. A v10 YOLOv8n retry finished 20 epochs; validation on three photos reached mAP50 0.501 and mAP50–95 0.118. At validation-selected score 0.25, phone inference found 2/3 signs with one extra box; median detector latency was 110ms and p95 161ms on the TECNO KJ8 CPU. Validation OCR was poor (ground-truth crop CER 0.656; detector crop CER 1.453). Image 28 is a Ticud–Lapaz route outside WVSU route coverage; image 34 is a single neon/LED board style absent from training, and the model missed it. ONNX host and phone parity still fail, so v10 is not in the app. The normal debug app is installed on the phone with the manual planner; its scanner remains disabled. SSD MobileNetV2 and EfficientDet-Lite0 still have no comparable runs, so there is no model winner. Data/split checks, the synthetic smoke check, and 19 Python tests passed. See [Nov. 8 M3 results](results-2026-11-08.md) and [v5 model results](results-2026-11-07.md). The checked-in synthetic fixture remains separate and cannot be used to claim candidate performance.
 
 ## Reproduce the tooling check
@@ -70,7 +72,7 @@ From PowerShell at the repository root, with the optional model packages install
 
 ```powershell
 $mlPy = Join-Path $env:LOCALAPPDATA 'ParaPo\m3-yolo-venv\Scripts\python.exe'
-& $mlPy tools/run_yolo_demo.py --manifest datasets/m3-samples/manifest.jsonl --split-record datasets/m3-samples/split-v4.json --checkpoint datasets/m3-samples/runs/yolov8n-reviewed-20ep/weights/best.pt --output-dir datasets/m3-samples/runs/demo-replay-v4 --device 0
+& $mlPy tools/run_yolo_demo.py --manifest datasets/m3-samples/manifest.jsonl --split-record datasets/m3-samples/split-v4.json --checkpoint datasets/m3-samples/runs/yolov8n-reviewed-20ep/weights/best.pt --output-dir datasets/m3-samples/runs/demo-replay-v4 --device 0 --split validation
 python tools/experiment.py validate-record --kind run --input datasets/m3-samples/runs/demo-v4/run-record.json
 ```
 

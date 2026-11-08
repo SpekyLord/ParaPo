@@ -377,3 +377,30 @@ At this dated update, only M1-02 was checked. M2 route-map approval does not aut
 | M1-08 | **OPEN.** Feasibility cannot be decided until M1-01–M1-07 evidence is available and the project lead records the operating envelope or a narrower supported claim. |
 
 The route maps support the M2 route catalog only; they do not establish that camera collection is permitted or that route signs can be read in time from the designated phone.
+
+
+### Scanner/OCR and parity implementation update — 2026-11-08
+
+See [current scanner and Tecno evidence](evidence/m4/scanner-2026-11-08.md). This update supersedes the earlier current-state statements about disabled recognition and unresolved v10 export parity; it preserves task IDs, checkboxes, and dated history.
+
+- **M1-04 / M3-07:** independent bundled ML Kit diagnostic ran on ten reviewed still crops on TECNO KJ8. Four of nine known printed codes were recovered; several legible strips returned empty text. This is not the required live-readability/useful-window pilot. Deskew/enlargement probes did not recover the two targeted codes and were not added to normal OCR.
+- **M3-02–04:** v11 reviewed all 40 signs, corrected five transcriptions, and added eight still-image owner links across six contextual photos. v10 and its frozen split remain unchanged. Existing test photos remain previously inspected development evidence. No fresh held-out encounters were created.
+- **M1-05 / M3-08:** the same v10 checkpoint/export now passes desktop and Tecno identical-tensor and actual-bitmap preprocessing/decoding comparisons on three validation photos. Rectangular versus square inputs and Skia versus OpenCV interpolation caused the observed differences. Neither thresholds nor tolerances were loosened. This does not complete the other detector paths or establish real accuracy.
+- **M3-05–10:** no new training; the conditional retry was not triggered because clear-crop OCR remains a bottleneck. The three-detector comparison and model-winner decision remain open. Fresh validation replay/report uses explicit validation-only inference and corrected OCR denominators; historical reports are retained.
+- **M4-03–14:** camera analysis is connected, aligned frozen reading is the default, and the checked experimental v10 detector can be explicitly selected. Existing selection, direction, and temporal components are reused; overlapping/lost/stale/reselected targets clear evidence. Delayed success and failure callbacks are rejected. A frozen crop is labeled as a captured image, not a live vehicle. Complete M4 acceptance still needs the unmeasured ownership/roadside cases.
+- **M4-02 / M4-15:** the actual-phone aligned capture/detector-mode/reselection/failure-fallback smoke check passes. Preview and manual navigation remain available. Final regression and update-install checks are listed in the linked evidence; no broad task is checked merely because a build passed.
+- **M5-04–09:** encounter tooling now records same-route wrong ownership, unknown ownership, direction uncertainty, timed stable results, and useful-window outcomes with PRD denominators. Still-photo/replay/live evidence stays separate. No real encounter outcome or full capture-to-display measurement was invented.
+
+Anyone can handle the remaining checks. The next useful action is a small fresh stationary encounter pilot with independent route/direction/owner labels and useful reading windows, comparing aligned reading with selected detector crops. No formal role assignment or sign-off is introduced by this update.
+
+
+Final scanner-slice checks: **PASSED** — 28 Python tests, synthetic smoke, v10/v11 frozen verification, unchanged-tolerance desktop/phone parity, normal debug build and 23 JVM tests, and all 26 isolated Tecno tests with no skips. The normal APK was rebuilt without the isolated property and installed with `adb install -r`; the route database checksum was unchanged. This does not close fresh encounter/readability/ownership/timing acceptance or the three-detector study. See the linked evidence for retained failed attempts and exact measurement boundaries.
+
+
+### Overnight saved-crop OCR investigation — 2026-11-09
+
+See [bounded crop comparison and minimum-size fix](evidence/m4/ocr-2026-11-09.md). M3-07/M4-04/M4-15 now have additional phone evidence: four fixed variants on the ten original crops in two orders, followed by original-versus-border on the other 28 photos/30 signs. General padding improved two screening examples but regressed other text, so it was not enabled broadly. Contrast and character stretching were also rejected. Both orders returned identical words/errors.
+
+One real input failure was fixed centrally: a 43×23 crop violated ML Kit's 32-pixel minimum. The shared reader now pads only missing canvas size, preserving original pixels and ownership. The actual crop now returns an explicit empty result without an API error. All 60 post-fix verification inputs processed without API errors; the change does not claim recovered text. Reader policy and actual input dimensions are recorded in diagnostics.
+
+The 32 Python tests, synthetic smoke, and all 27 isolated Tecno tests passed without skips. No detector retraining, dataset/split change, route-bundle change, upload, commit, or push occurred. Previously inspected test photos were disclosed as development evidence. The daylight readability/ownership/useful-window pilot, sustained scanner run, and three-detector comparison remain open; no broad acceptance checkbox is closed by this fix.

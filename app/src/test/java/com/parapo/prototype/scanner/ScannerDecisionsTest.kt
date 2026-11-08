@@ -14,6 +14,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ScannerDecisionsTest {
+    @Test fun leadingZeroCodesKeepWholeNumericBoundaries() {
+        for (text in listOf("03", "3", "03 UNGKA-ILOILO CITY PROPER VIA CPU")) {
+            assertEquals(RouteTextResolution.Found("R3"), ScannerDecisions.routeFromText(text, catalog))
+        }
+        for (text in listOf("13", "30", "103")) {
+            assertEquals(RouteTextResolution.Unsupported, ScannerDecisions.routeFromText(text, catalog))
+        }
+        assertTrue(ScannerDecisions.routeFromText("03 10", catalog) is RouteTextResolution.Ambiguous)
+    }
     private val catalog = run {
         val base = syntheticCatalog(listOf(
             patternSpec("r3-to-wvsu", "Route 3", StopSpec("A", board = true), StopSpec("B", alight = true)),
@@ -121,6 +130,10 @@ class ScannerDecisionsTest {
         assertEquals(SignBox(12f, 10f, 102f, 80f), target.associate(listOf(SignBox(12f, 10f, 102f, 80f))))
         assertEquals(id, target.selectedId)
         assertNull(target.associate(emptyList()))
+        assertNull(target.selectedId)
+
+        target.select(first)
+        assertNull(target.associate(listOf(first, SignBox(80f, 10f, 180f, 80f))))
         assertNull(target.selectedId)
 
         target.select(first)

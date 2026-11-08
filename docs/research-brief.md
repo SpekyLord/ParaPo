@@ -4,6 +4,8 @@ Research date: 4 November 2026. Prepared from the supplied concept, DSA rubric, 
 
 Follow-up: the [vehicle-first scanner review (8 November 2026)](#vehicle-first-scanner-review-2026-11-08) records the current code/data findings, alternatives, and recommendation. The original brief below remains dated context; use the follow-up for this scanner decision.
 
+Implementation follow-up: [scanner and Tecno evidence, 8 November 2026](evidence/m4/scanner-2026-11-08.md) now records the independent ML Kit crop diagnostic, corrected matcher/scoring, and resolved same-input desktop/Android parity. Aligned snapshots are the default; the checked v10 detector is an explicit experimental option. The review below describes its earlier inspection state. These code/phone checks do not establish live roadside accuracy or complete the three-detector study.
+
 ## Assessment
 
 **ParaPo is a defensible Computer Vision and DSA project if its main contribution is testing camera-assisted identification of a particular jeepney against a verified, directional journey.** A small Android prototype is a reasonable objective. Reliable recognition of distant, fast-moving jeepneys under arbitrary conditions remains unproven.

@@ -40,6 +40,16 @@ android {
     testOptions {
         animationsDisabled = true
     }
+
+    sourceSets.getByName("androidTest").assets.srcDir("../tools/fixtures")
+
+    // Local diagnostics exist only in the isolated instrumentation build.
+    if (project.hasProperty("parapoIsolatedUiTest")) {
+        sourceSets.getByName("debug") {
+            java.srcDir("src/diagnostic/java")
+            manifest.srcFile("src/diagnostic/AndroidManifest.xml")
+        }
+    }
 }
 
 dependencies {
