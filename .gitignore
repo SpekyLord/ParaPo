@@ -21,6 +21,10 @@ __pycache__/
 
 # Collect and distribute datasets/models separately
 /data/
+# Keep the reviewed app route source so the bundled database can be rebuilt.
+!/data/
+/data/*
+!/data/iloilo-jaro-wvsu.json
 /datasets/
 /models/
 *.pt

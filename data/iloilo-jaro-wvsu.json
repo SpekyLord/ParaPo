@@ -1,0 +1,653 @@
+{
+  "schemaVersion": 1,
+  "datasetVersion": "iloilo-jaro-wvsu-2026-11-08",
+  "publicationDate": "2026-11-08",
+  "sourceRefs": [
+    "iloilo-route-plan",
+    "osm-coordinates",
+    "project-confirmation"
+  ],
+  "sources": [
+    {
+      "id": "iloilo-route-plan",
+      "description": "Iloilo City Planning route maps for Route 3 Ungka–CPU and Route 10 Buntatala/Tagbak; project lead approved the Jaro Plaza–WVSU corridor and confirmed the Jaro Plaza direction",
+      "reference": "docs/evidence/m2/source-maps/route-03-iloilo-city-planning.png | docs/evidence/m2/source-maps/route-10-iloilo-city-planning.png | LTFRB MC 2023-036",
+      "contactRole": "Iloilo City Planning and Development Office route map; ParaPo project lead is the route data steward"
+    },
+    {
+      "id": "osm-coordinates",
+      "description": "Stop and street geometry traced to OpenStreetMap road ways; data checked 2026-11-08. © OpenStreetMap contributors.",
+      "reference": "https://www.openstreetmap.org/copyright",
+      "contactRole": "OpenStreetMap contributors"
+    },
+    {
+      "id": "project-confirmation",
+      "description": "Project lead confirmed the supported Jaro Plaza travel direction against the supplied route maps and rider observation; exact connector to the road at Jaro Plaza remains approximate.",
+      "reference": "Project approval and route confirmation, 2026-11-06; route geometry cross-check 2026-11-08",
+      "contactRole": "ParaPo project lead / route data steward"
+    }
+  ],
+  "routes": [
+    {
+      "id": "ILO-03",
+      "name": "Route 3 — Ungka to City Proper via CPU",
+      "aliases": [
+        "Ungka CPU",
+        "Ungka-CPU jeep",
+        "Route 3"
+      ]
+    },
+    {
+      "id": "ILO-10",
+      "name": "Route 10 — Buntatala/Tagbak to City Proper",
+      "aliases": [
+        "Jaro Liko",
+        "Jaro Liko jeep",
+        "Route 10",
+        "Tagbak"
+      ]
+    }
+  ],
+  "locations": [
+    {
+      "id": "JARO-PLAZA-CATHEDRAL",
+      "name": "Jaro Plaza (Cathedral area)",
+      "aliases": [
+        "Jaro Cathedral",
+        "Jaro Metropolitan Cathedral",
+        "Jaro Plaza",
+        "Plaza Jaro"
+      ],
+      "latitude": 10.7237337,
+      "longitude": 122.5564582,
+      "type": "boarding area"
+    },
+    {
+      "id": "WVSU-LUNA-GATE-2",
+      "name": "WVSU Gate 2 (Luna Street)",
+      "aliases": [
+        "WVSU",
+        "West Visayas State University",
+        "West Visayas State University Main Campus",
+        "WVSU Luna Street"
+      ],
+      "latitude": 10.7150486,
+      "longitude": 122.5631292,
+      "type": "alighting area"
+    }
+  ],
+  "patterns": [
+    {
+      "id": "ILO-03-JARO-TO-WVSU",
+      "routeId": "ILO-03",
+      "direction": "Jaro Plaza to WVSU via E. Lopez Street",
+      "branchHeadsign": "Toward WVSU",
+      "active": true,
+      "verificationStatus": "VERIFIED",
+      "verificationDate": "2026-11-08",
+      "sourceRef": "iloilo-route-plan",
+      "stops": [
+        {
+          "locationId": "JARO-PLAZA-CATHEDRAL",
+          "boardingAllowed": true,
+          "alightingAllowed": false
+        },
+        {
+          "locationId": "WVSU-LUNA-GATE-2",
+          "boardingAllowed": false,
+          "alightingAllowed": true
+        }
+      ],
+      "geometry": [
+        {
+          "latitude": 10.7237337,
+          "longitude": 122.5564582,
+          "stopOccurrenceSequence": 1
+        },
+        {
+          "latitude": 10.7231646,
+          "longitude": 122.556824
+        },
+        {
+          "latitude": 10.7236413,
+          "longitude": 122.5572346
+        },
+        {
+          "latitude": 10.7233486,
+          "longitude": 122.5574913
+        },
+        {
+          "latitude": 10.7232117,
+          "longitude": 122.5576113
+        },
+        {
+          "latitude": 10.7231552,
+          "longitude": 122.5576558
+        },
+        {
+          "latitude": 10.7230856,
+          "longitude": 122.5577107
+        },
+        {
+          "latitude": 10.721956,
+          "longitude": 122.5585502
+        },
+        {
+          "latitude": 10.7217764,
+          "longitude": 122.5586731
+        },
+        {
+          "latitude": 10.7215575,
+          "longitude": 122.5588285
+        },
+        {
+          "latitude": 10.7214654,
+          "longitude": 122.5588978
+        },
+        {
+          "latitude": 10.7213773,
+          "longitude": 122.5589581
+        },
+        {
+          "latitude": 10.721136,
+          "longitude": 122.5591181
+        },
+        {
+          "latitude": 10.7211117,
+          "longitude": 122.559137
+        },
+        {
+          "latitude": 10.721035,
+          "longitude": 122.5591874
+        },
+        {
+          "latitude": 10.7201954,
+          "longitude": 122.5597307
+        },
+        {
+          "latitude": 10.7194944,
+          "longitude": 122.5601843
+        },
+        {
+          "latitude": 10.7188858,
+          "longitude": 122.5606034
+        },
+        {
+          "latitude": 10.7188478,
+          "longitude": 122.5606268
+        },
+        {
+          "latitude": 10.7186292,
+          "longitude": 122.5607652
+        },
+        {
+          "latitude": 10.7185283,
+          "longitude": 122.5608321
+        },
+        {
+          "latitude": 10.7178732,
+          "longitude": 122.5612609
+        },
+        {
+          "latitude": 10.7176166,
+          "longitude": 122.5614219
+        },
+        {
+          "latitude": 10.7172921,
+          "longitude": 122.5616257
+        },
+        {
+          "latitude": 10.7169369,
+          "longitude": 122.5618448
+        },
+        {
+          "latitude": 10.7168024,
+          "longitude": 122.5619306
+        },
+        {
+          "latitude": 10.716753,
+          "longitude": 122.5619621
+        },
+        {
+          "latitude": 10.7164355,
+          "longitude": 122.5621648
+        },
+        {
+          "latitude": 10.7163617,
+          "longitude": 122.5622097
+        },
+        {
+          "latitude": 10.7160191,
+          "longitude": 122.5624253
+        },
+        {
+          "latitude": 10.7159091,
+          "longitude": 122.5624988
+        },
+        {
+          "latitude": 10.7158849,
+          "longitude": 122.5625122
+        },
+        {
+          "latitude": 10.7157576,
+          "longitude": 122.5625938
+        },
+        {
+          "latitude": 10.7155593,
+          "longitude": 122.5627239
+        },
+        {
+          "latitude": 10.7153503,
+          "longitude": 122.5628563
+        },
+        {
+          "latitude": 10.7151889,
+          "longitude": 122.562922
+        },
+        {
+          "latitude": 10.7150486,
+          "longitude": 122.5631292,
+          "stopOccurrenceSequence": 2
+        }
+      ]
+    },
+    {
+      "id": "ILO-03-WVSU-TO-JARO",
+      "routeId": "ILO-03",
+      "direction": "WVSU to Jaro Plaza via E. Lopez Street",
+      "branchHeadsign": "Toward Ungka / CPU",
+      "active": true,
+      "verificationStatus": "VERIFIED",
+      "verificationDate": "2026-11-08",
+      "sourceRef": "iloilo-route-plan",
+      "stops": [
+        {
+          "locationId": "WVSU-LUNA-GATE-2",
+          "boardingAllowed": true,
+          "alightingAllowed": false
+        },
+        {
+          "locationId": "JARO-PLAZA-CATHEDRAL",
+          "boardingAllowed": false,
+          "alightingAllowed": true
+        }
+      ],
+      "geometry": [
+        {
+          "latitude": 10.7150486,
+          "longitude": 122.5631292,
+          "stopOccurrenceSequence": 1
+        },
+        {
+          "latitude": 10.7151889,
+          "longitude": 122.562922
+        },
+        {
+          "latitude": 10.7153503,
+          "longitude": 122.5628563
+        },
+        {
+          "latitude": 10.7155593,
+          "longitude": 122.5627239
+        },
+        {
+          "latitude": 10.7157576,
+          "longitude": 122.5625938
+        },
+        {
+          "latitude": 10.7158849,
+          "longitude": 122.5625122
+        },
+        {
+          "latitude": 10.7159091,
+          "longitude": 122.5624988
+        },
+        {
+          "latitude": 10.7160191,
+          "longitude": 122.5624253
+        },
+        {
+          "latitude": 10.7163617,
+          "longitude": 122.5622097
+        },
+        {
+          "latitude": 10.7164355,
+          "longitude": 122.5621648
+        },
+        {
+          "latitude": 10.716753,
+          "longitude": 122.5619621
+        },
+        {
+          "latitude": 10.7168024,
+          "longitude": 122.5619306
+        },
+        {
+          "latitude": 10.7169369,
+          "longitude": 122.5618448
+        },
+        {
+          "latitude": 10.7172921,
+          "longitude": 122.5616257
+        },
+        {
+          "latitude": 10.7176166,
+          "longitude": 122.5614219
+        },
+        {
+          "latitude": 10.7178732,
+          "longitude": 122.5612609
+        },
+        {
+          "latitude": 10.7185283,
+          "longitude": 122.5608321
+        },
+        {
+          "latitude": 10.7186292,
+          "longitude": 122.5607652
+        },
+        {
+          "latitude": 10.7188478,
+          "longitude": 122.5606268
+        },
+        {
+          "latitude": 10.7188858,
+          "longitude": 122.5606034
+        },
+        {
+          "latitude": 10.7194944,
+          "longitude": 122.5601843
+        },
+        {
+          "latitude": 10.7201954,
+          "longitude": 122.5597307
+        },
+        {
+          "latitude": 10.721035,
+          "longitude": 122.5591874
+        },
+        {
+          "latitude": 10.7211117,
+          "longitude": 122.559137
+        },
+        {
+          "latitude": 10.721136,
+          "longitude": 122.5591181
+        },
+        {
+          "latitude": 10.7213773,
+          "longitude": 122.5589581
+        },
+        {
+          "latitude": 10.7214654,
+          "longitude": 122.5588978
+        },
+        {
+          "latitude": 10.7215575,
+          "longitude": 122.5588285
+        },
+        {
+          "latitude": 10.7217764,
+          "longitude": 122.5586731
+        },
+        {
+          "latitude": 10.721956,
+          "longitude": 122.5585502
+        },
+        {
+          "latitude": 10.7230856,
+          "longitude": 122.5577107
+        },
+        {
+          "latitude": 10.7231552,
+          "longitude": 122.5576558,
+          "stopOccurrenceSequence": 2
+        }
+      ]
+    },
+    {
+      "id": "ILO-10-JARO-TO-WVSU",
+      "routeId": "ILO-10",
+      "direction": "Jaro Plaza to WVSU via Commission Civil and Del Carmen Streets",
+      "branchHeadsign": "Toward City Proper",
+      "active": true,
+      "verificationStatus": "VERIFIED",
+      "verificationDate": "2026-11-08",
+      "sourceRef": "iloilo-route-plan",
+      "stops": [
+        {
+          "locationId": "JARO-PLAZA-CATHEDRAL",
+          "boardingAllowed": true,
+          "alightingAllowed": false
+        },
+        {
+          "locationId": "WVSU-LUNA-GATE-2",
+          "boardingAllowed": false,
+          "alightingAllowed": true
+        }
+      ],
+      "geometry": [
+        {
+          "latitude": 10.7237337,
+          "longitude": 122.5564582,
+          "stopOccurrenceSequence": 1
+        },
+        {
+          "latitude": 10.7219643,
+          "longitude": 122.560202
+        },
+        {
+          "latitude": 10.7215606,
+          "longitude": 122.5606782
+        },
+        {
+          "latitude": 10.7213198,
+          "longitude": 122.5609574
+        },
+        {
+          "latitude": 10.7212865,
+          "longitude": 122.5609987
+        },
+        {
+          "latitude": 10.7212073,
+          "longitude": 122.5610862
+        },
+        {
+          "latitude": 10.7207809,
+          "longitude": 122.5615276
+        },
+        {
+          "latitude": 10.7206258,
+          "longitude": 122.5617005
+        },
+        {
+          "latitude": 10.7204849,
+          "longitude": 122.5618295
+        },
+        {
+          "latitude": 10.7201345,
+          "longitude": 122.5622104
+        },
+        {
+          "latitude": 10.7188543,
+          "longitude": 122.5635263
+        },
+        {
+          "latitude": 10.7169369,
+          "longitude": 122.5618448
+        },
+        {
+          "latitude": 10.7168024,
+          "longitude": 122.5619306
+        },
+        {
+          "latitude": 10.716753,
+          "longitude": 122.5619621
+        },
+        {
+          "latitude": 10.7164355,
+          "longitude": 122.5621648
+        },
+        {
+          "latitude": 10.7163617,
+          "longitude": 122.5622097
+        },
+        {
+          "latitude": 10.7160191,
+          "longitude": 122.5624253
+        },
+        {
+          "latitude": 10.7159091,
+          "longitude": 122.5624988
+        },
+        {
+          "latitude": 10.7158849,
+          "longitude": 122.5625122
+        },
+        {
+          "latitude": 10.7157576,
+          "longitude": 122.5625938
+        },
+        {
+          "latitude": 10.7155593,
+          "longitude": 122.5627239
+        },
+        {
+          "latitude": 10.7153503,
+          "longitude": 122.5628563
+        },
+        {
+          "latitude": 10.7151889,
+          "longitude": 122.562922
+        },
+        {
+          "latitude": 10.7150486,
+          "longitude": 122.5631292,
+          "stopOccurrenceSequence": 2
+        }
+      ]
+    },
+    {
+      "id": "ILO-10-WVSU-TO-JARO",
+      "routeId": "ILO-10",
+      "direction": "WVSU to Jaro Plaza via Luna, Del Carmen, and Commission Civil Streets",
+      "branchHeadsign": "Toward Tagbak / Buntatala",
+      "active": true,
+      "verificationStatus": "VERIFIED",
+      "verificationDate": "2026-11-08",
+      "sourceRef": "iloilo-route-plan",
+      "stops": [
+        {
+          "locationId": "WVSU-LUNA-GATE-2",
+          "boardingAllowed": true,
+          "alightingAllowed": false
+        },
+        {
+          "locationId": "JARO-PLAZA-CATHEDRAL",
+          "boardingAllowed": false,
+          "alightingAllowed": true
+        }
+      ],
+      "geometry": [
+        {
+          "latitude": 10.7150486,
+          "longitude": 122.5631292,
+          "stopOccurrenceSequence": 1
+        },
+        {
+          "latitude": 10.7151889,
+          "longitude": 122.562922
+        },
+        {
+          "latitude": 10.7153503,
+          "longitude": 122.5628563
+        },
+        {
+          "latitude": 10.7155593,
+          "longitude": 122.5627239
+        },
+        {
+          "latitude": 10.7157576,
+          "longitude": 122.5625938
+        },
+        {
+          "latitude": 10.7158849,
+          "longitude": 122.5625122
+        },
+        {
+          "latitude": 10.7159091,
+          "longitude": 122.5624988
+        },
+        {
+          "latitude": 10.7160191,
+          "longitude": 122.5624253
+        },
+        {
+          "latitude": 10.7163617,
+          "longitude": 122.5622097
+        },
+        {
+          "latitude": 10.7164355,
+          "longitude": 122.5621648
+        },
+        {
+          "latitude": 10.716753,
+          "longitude": 122.5619621
+        },
+        {
+          "latitude": 10.7168024,
+          "longitude": 122.5619306
+        },
+        {
+          "latitude": 10.7169369,
+          "longitude": 122.5618448
+        },
+        {
+          "latitude": 10.7188543,
+          "longitude": 122.5635263
+        },
+        {
+          "latitude": 10.7201345,
+          "longitude": 122.5622104
+        },
+        {
+          "latitude": 10.7204849,
+          "longitude": 122.5618295
+        },
+        {
+          "latitude": 10.7206258,
+          "longitude": 122.5617005
+        },
+        {
+          "latitude": 10.7207809,
+          "longitude": 122.5615276
+        },
+        {
+          "latitude": 10.7212073,
+          "longitude": 122.5610862
+        },
+        {
+          "latitude": 10.7212865,
+          "longitude": 122.5609987
+        },
+        {
+          "latitude": 10.7213198,
+          "longitude": 122.5609574
+        },
+        {
+          "latitude": 10.7215606,
+          "longitude": 122.5606782
+        },
+        {
+          "latitude": 10.7219643,
+          "longitude": 122.560202
+        },
+        {
+          "latitude": 10.7237337,
+          "longitude": 122.5564582,
+          "stopOccurrenceSequence": 2
+        }
+      ]
+    }
+  ]
+}

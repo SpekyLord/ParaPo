@@ -1,0 +1,2 @@
+{"sample_id":"syn-val-1","crop_source":"ground_truth","truth_text":"R1","predicted_text":"R1","truth_route_code":"R1","predicted_route_code":"R1"}
+{"sample_id":"syn-val-1","crop_source":"detector","truth_text":"R1","predicted_text":"RI","truth_route_code":"R1","predicted_route_code":"unknown"}

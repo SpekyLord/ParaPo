@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">ParaPo</string>
+    <string name="back">Back</string>
+    <string name="info">Info</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_explore">Explore</string>
+    <string name="plan_heading">Plan your trip</string>
+    <string name="plan_help">Choose where you start and where you want to go.</string>
+    <string name="starting_point">Starting point</string>
+    <string name="destination">Destination</string>
+    <string name="find_route">Find my route</string>
+    <string name="change">Change</string>
+    <string name="change_place">Change %1$s</string>
+</resources>

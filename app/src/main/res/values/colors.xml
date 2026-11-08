@@ -1,0 +1,15 @@
+<resources>
+    <color name="launcher_background">#FAB022</color>
+    <color name="paper">#FAF7ED</color>
+    <color name="ink">#1F2124</color>
+    <color name="blue">#1F528C</color>
+    <color name="marigold">#FAAD21</color>
+    <color name="card_border">#D4D1C4</color>
+    <color name="card_white">#FFFFFF</color>
+    <color name="outcome_green">#1F6647</color>
+    <color name="outcome_red">#A82929</color>
+    <color name="match_surface">#E8F5EB</color>
+    <color name="mismatch_surface">#FFEDEB</color>
+    <color name="neutral_surface">#EBF2FA</color>
+    <color name="coverage_surface">#FFF3D4</color>
+</resources>

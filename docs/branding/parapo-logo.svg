@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">ParaPo route logo</title>
+  <rect width="128" height="128" rx="30" fill="#FAAD21"/>
+  <path d="M43 94V33h31c17 0 26 9 26 23S91 79 74 79H43" fill="none" stroke="#1F528C" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="43" cy="33" r="7" fill="#FAF7ED"/>
+  <circle cx="100" cy="56" r="7" fill="#FAF7ED"/>
+  <circle cx="43" cy="94" r="7" fill="#FAF7ED"/>
+</svg>

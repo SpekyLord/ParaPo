@@ -1,71 +1,126 @@
-# ParaPo
+<p align="center">
+  <img src="docs/branding/parapo-logo.svg" width="128" alt="ParaPo route logo">
+</p>
 
-**Camera-assisted jeepney route identification and direct-journey matching for selected Iloilo City routes.**
+<h1 align="center">ParaPo</h1>
 
-ParaPo is a proposed Android application that helps commuters answer:
+<p align="center"><strong>Plan a direct jeepney ride across Jaro Plaza ↔ WVSU.</strong><br>
+A small Android school demo for route planning in Iloilo City.</p>
 
-- Which jeepney routes can take me to my destination?
-- Does the jeepney in front of me match that journey?
+<p align="center">
+  <img alt="Android API 34+" src="https://img.shields.io/badge/Android-API%2034%2B-3DDC84?logo=android&logoColor=white">
+  <img alt="Kotlin 2.2.10" src="https://img.shields.io/badge/Kotlin-2.2.10-7F52FF?logo=kotlin&logoColor=white">
+  <img alt="School prototype" src="https://img.shields.io/badge/Project-school%20demo-FAAD21">
+</p>
 
-## Project status
+ParaPo lets someone choose two places and see which of the supported jeepney routes serves the trip directly. It combines a local route catalog, a live camera preview, and an interactive street map. There is no GPS tracking.
 
-**Research and planning.** This repository contains the concept and research brief. It does not yet contain a working Android application, trained models, collected dataset, or verified operational route database. Accuracy and real-time performance have not been established.
+## At a glance
 
-## Initial scope
-
-- Manual origin and destination selection.
-- Direct-journey lookup for 3–5 verified directional route patterns.
-- Route details and a route map.
-- Live camera sign detection, OCR, and matching to stored route information.
-- Daylight scanning with one targeted vehicle at a time.
-- Manual fallback when recognition fails.
-
-The prototype will distinguish three outcomes using text as well as color:
-
-| Result | Meaning |
+| | What works |
 | --- | --- |
-| Green | Identified route and resolved direction match the selected journey. |
-| Red | The identified route and direction do not provide a direct match within verified coverage. |
-| Gray | Recognition, route coverage, or direction is uncertain. |
+| **Plan** | Choose a start and destination manually. See eligible directions for Routes 3 and 10. |
+| **Scan** | Open a live **back-camera** preview after granting camera permission. Preview works independently of route-sign recognition. |
+| **Explore** | Browse the supported route catalog without selecting a journey. |
+| **Map** | Pan and zoom street maps in Results and Route Details; select a route to highlight its path and journey stops. |
 
-An unsupported route is uncertain, not automatically a non-match. Reading a route name alone does not establish travel direction.
+<p align="center">
+  <img src="docs/evidence/m2/screenshots/tecno-results-labeled.png" width="560" alt="ParaPo route results showing Routes 3 and 10 over Iloilo streets with boarding and alighting markers">
+</p>
 
-Transfers, fares, arrival-time prediction, citywide coverage, accounts, and full offline maps are outside the initial scope.
+### Demo status
 
-## Proposed approach
+- **Camera preview:** works on the Tecno KJ8 and uses its back-facing camera. Camera permission is requested only when opening Scan. Frames stay on the device.
+- **Recognition:** unavailable. The latest experimental ONNX export does not match its PyTorch reference, so ParaPo does not show sign detections or compatibility decisions. Manual planning and route details remain available.
+- **Map:** MapLibre Native renders OpenFreeMap Liberty tiles, with streets and place labels. Fresh tiles need internet; a Retry action appears when the map cannot load.
+- **Coverage:** only the Jaro Plaza–WVSU corridor on Routes 3 and 10, in four directional patterns. Dashed amber joins are unresolved source-map sections, not verified roads.
 
-Camera frame → sign detection → original-resolution sign crop → OCR → route candidates → directional journey check → labeled result.
+## Route coverage
 
-The planned detector comparison is YOLOv8n, a precisely specified SSD MobileNetV2 variant, and EfficientDet-Lite0. All three must be tested on the same sign-detection task with fixed downstream OCR and route matching. Model selection remains subject to training, export, and target-phone feasibility tests.
+The bundled catalog supports these journeys:
 
-The proposed Android stack is Kotlin, CameraX, on-device OCR, a compatible mobile inference runtime, and local route storage. Python supports dataset preparation and experiments. These are candidates, not installed dependencies.
+| Route | Jaro Plaza → WVSU | WVSU → Jaro Plaza |
+| --- | --- | --- |
+| **3** | Supported | Supported |
+| **10** | Supported | Supported |
 
-Directional route patterns will use ordered stop occurrences. A graph representation must preserve the route pattern so shared landmarks do not create accidental transfers. The initial graph operation is route-constrained reachability; shortest-distance algorithms are only needed if that objective is added.
+Results display eligible paths together. Choose a route to highlight it; Details shows that direction between the selected boarding and alighting stops. Stop order and route geometry remain in the local catalog.
 
-## Research question
+The route street sequences follow the supplied Iloilo City Planning maps, with road geometry traced against OpenStreetMap data checked on 2026-11-08. Available sources do not establish the exact Route 3 Jaro Plaza boarding/return joins or the Route 10 Plaza approach and short Commission Civil–Del Carmen join. Those sections stay dashed and are described in the [source-map note](docs/evidence/m2/source-maps/README.md). This is corridor planning, not turn-by-turn guidance or a full route catalog.
 
-How accurately and quickly can a smartphone identify a jeepney route from its signage and match it to a selected journey while withholding a decision when the evidence is uncertain?
+## Map, network, and privacy
 
-Evaluate sign detection, OCR, route identification, incorrect green decisions, abstention rate, and end-to-end latency. Split data by independent vehicle encounters rather than randomly splitting adjacent video frames.
+- Map tiles come from the [OpenFreeMap Liberty style](https://tiles.openfreemap.org/styles/liberty), rendered with [MapLibre Native for Android](https://maplibre.org/maplibre-native/android/). No map key or paid account is required for this demo setup.
+- Map attribution is shown in the app and names OpenStreetMap contributors, OpenMapTiles, and OpenFreeMap. See [OpenStreetMap copyright and license](https://www.openstreetmap.org/copyright).
+- Android `INTERNET` and `ACCESS_NETWORK_STATE` permissions are used for tiles and retry status. Camera permission is requested at Scan. Location permission is not used.
+- Camera frames are not uploaded or saved by ordinary app use. If tiles are unavailable, route cards, markers, ordered stops, and the local schematic remain available. Cached tiles may be incomplete; there is no full offline basemap.
 
-## Documents
+## Build and run
 
-- [Product requirements](docs/PRD.md): implementation scope, user flows, requirements, acceptance criteria, evaluation, and release gates.
+### Requirements
 
-- [Research brief](docs/research-brief.md): related work, feasibility, course-rubric alignment, dataset design, comparison protocol, and evaluation plan. Researched November 4, 2026.
-- [Original concept](docs/original-concept.md): the initial proposal, preserved for reference. Where its scope is broader, this README and the research brief describe the recommended first version.
+- Windows with JDK 17
+- Android SDK platform 36 and a connected Android 14 / API 34+ device for phone checks
+- The checked-in Gradle wrapper supplies Gradle 8.11.1
 
-## Next steps
+Set the Android SDK location in PowerShell, then build:
 
-1. Collect a small sign-readability pilot on the intended Android phone.
-2. Verify selected boarding points and directional route patterns.
-3. Build manual direct-journey lookup and route details.
-4. Prove training and mobile export for all three detector candidates.
-5. Collect and label the experimental dataset; run the controlled comparison.
-6. Integrate and evaluate the scanner, including uncertain and unsupported cases.
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
 
-No build or test commands are available yet. Course materials, temporary research files, camera recordings, and model weights are not included.
+.\gradlew.bat assembleDebug
+```
 
-## Limitations
+Install or update the normal debug build on a connected phone:
 
-This project is a proposed commuting aid, not validated boarding guidance. Route data may become outdated. Recognition must return an uncertain result when it cannot establish a route or direction. Field testing is required before claiming useful recognition of approaching vehicles.
+```powershell
+adb install -r .\app\build\outputs\apk\debug\app-debug.apk
+```
+
+The `-r` update keeps existing app data. The APK is a universal debug APK and includes native libraries for several device types.
+
+### Checks
+
+```powershell
+.\gradlew.bat assembleDebug testDebugUnitTest
+.\gradlew.bat -PparapoIsolatedUiTest connectedDebugAndroidTest
+.\gradlew.bat assembleDebug assembleRelease
+```
+
+The isolated connected-test package uses `com.parapo.prototype.uitest`; it keeps tests that modify route data away from the normal phone installation. Rebuild `assembleDebug` without the isolated-test property before installing the demo APK. On the Tecno KJ8 / Android 14, the 2026-11-08 run passed 22 unit tests and 21 connected tests. See [camera and map test evidence](docs/evidence/m2/map-camera-2026-11-08.md).
+
+### APKs
+
+- Normal installable debug APK: `app/build/outputs/apk/debug/app-debug.apk`
+- Unsigned release APK: `app/build/outputs/apk/release/app-release-unsigned.apk`
+
+## Route data
+
+Editable catalog source: `data/iloilo-jaro-wvsu.json`. Rebuild the packaged SQLite bundle after reviewing a route-data edit:
+
+```powershell
+python tools/build_route_bundle.py
+```
+
+Current dataset: `iloilo-jaro-wvsu-2026-11-08` (four directional patterns). On app startup, the validated packaged bundle upgrades an older installed catalog through `RouteBundleStore.replaceBundle`; an older bundle cannot replace newer data, and a failed update retains the last valid catalog.
+
+## Recognition experiment
+
+Recognition is kept off until the current model passes export parity. The latest v10 validation used only three photos; there is no v10 test-set inference, and the ONNX/PyTorch outputs differ. See [M3 results](docs/evidence/m3/results-2026-11-07.md) and [M4 implementation notes](docs/evidence/m4/implementation-2026-11-07.md).
+
+An ignored local model asset is optional for building the manual planner and live camera preview. To include the experimental model in a local build, copy the reviewed export:
+
+```powershell
+Copy-Item datasets\m3-samples\runs\yolov8n-reviewed-20ep\weights\best.onnx app\src\main\assets\route-sign-yolov8n.onnx
+```
+
+Expected SHA-256: `183a212b84273fc58870bf4dfd10bb76f52cecabf9e0c7ac5b8f1d01563116d8`. Keep the recorded parity checks; do not loosen thresholds to make the export appear ready.
+
+## Project notes
+
+- [Figma design](https://www.figma.com/design/eTi2eZQ5W8FU6JJOTPUbjR/ParaPo?node-id=6-3) and [design implementation](docs/design-implementation.md)
+- [Product requirements](docs/PRD.md) · [Research brief](docs/research-brief.md) · [Phase task tracker](docs/phasetask.md)
+- [Route source maps and geometry gaps](docs/evidence/m2/source-maps/README.md) · [Phone screenshots and acceptance results](docs/evidence/m2/map-camera-2026-11-08.md)
+
+ParaPo is a classroom prototype, not a production transit or navigation service. Schedules, transfers, other Iloilo routes, complete route geometry, sign recognition, and complete offline map coverage are outside the current demo.
