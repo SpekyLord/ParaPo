@@ -30,10 +30,10 @@ import java.util.Locale
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import org.maplibre.android.camera.CameraPosition
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -68,9 +68,10 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     private val cameraPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         scannerPermissionInFlight = false
         if (granted) {
-            if (screen == Screen.SCANNER) render()
-            startScannerCamera()
-        } else showCameraPermissionDenied()
+            scannerPermissionDenied = false
+            scannerPermissionPermanentlyDenied = false
+            if (screen == Screen.SCANNER) { render(); startScannerCamera() }
+        } else if (screen == Screen.SCANNER) showCameraPermissionDenied()
     }
     private val scannerHandler = Handler(Looper.getMainLooper())
     private val temporalTracker = TemporalDecisionTracker(ScannerSettings())
@@ -98,6 +99,8 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     private var scannerContextKey = ""
     private var scannerSessionId = 0L
     private var scannerPermissionDenied = false
+    private var scannerPermissionPermanentlyDenied = false
+    private var scannerGeneration = 0L
     private var scannerStarting = false
     private var scannerBound = false
     private var scannerModelHash = ""
@@ -105,6 +108,12 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     private var scannerPermissionInFlight = false
     private var scannerPipeline: ScannerPipeline? = null
     private var cameraProvider: ProcessCameraProvider? = null
+    private var routeMap: RouteStreetMapView? = null
+    private var selectedPathButton: Button? = null
+    private var resultsMapCamera: CameraPosition? = null
+    private var detailsMapCamera: CameraPosition? = null
+    private var activityStarted = false
+    private var activityResumed = false
     private var scannerPreview: PreviewView? = null
     private var scannerOverlay: ScannerOverlayView? = null
     private var scannerStatus: TextView? = null
@@ -200,13 +209,24 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         scannerReturnScreen = savedInstanceState?.getString(KEY_SCANNER_RETURN)?.let {
             runCatching { Screen.valueOf(it) }.getOrNull()
         } ?: Screen.RESULTS
-        scanReturnLabel = scannerReturnLabel(scannerNeutral, scannerReturnScreen)
+        resultsMapCamera = savedInstanceState?.getParcelable(KEY_RESULTS_MAP_CAMERA, CameraPosition::class.java)
+        detailsMapCamera = savedInstanceState?.getParcelable(KEY_DETAILS_MAP_CAMERA, CameraPosition::class.java)
+        scanReturnLabel = scannerReturnLabel(scannerReturnScreen)
         scannerContextKey = contextKey()
         scannerSessionId = temporalTracker.beginSession(scannerContextKey)
         updateCoverage()
         render()
         findViewById<View>(R.id.navigation).also { nav ->
             addNavButton(nav as LinearLayout, getString(R.string.nav_home)) { go(Screen.HOME) }
+            addNavButton(nav, "Scan") {
+                val returnTo = when (screen) {
+                    Screen.RESULTS -> Screen.RESULTS
+                    Screen.DETAILS -> Screen.DETAILS
+                    Screen.EXPLORE -> Screen.EXPLORE
+                    else -> Screen.HOME
+                }
+                openScanner(neutral = returnTo != Screen.DETAILS || selected == null, returnTo = returnTo)
+            }
             addNavButton(nav, getString(R.string.nav_explore)) { go(Screen.EXPLORE) }
         }
         updateNavigation()
@@ -231,30 +251,56 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
             outState.putInt(KEY_BOARD, it.boarding.sequence)
             outState.putInt(KEY_ALIGHT, it.alighting.sequence)
         }
+        resultsMapCamera?.let { outState.putParcelable(KEY_RESULTS_MAP_CAMERA, it) }
+        detailsMapCamera?.let { outState.putParcelable(KEY_DETAILS_MAP_CAMERA, it) }
+        routeMap?.saveState(outState)
         super.onSaveInstanceState(outState)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        activityStarted = true
+        routeMap?.onStart()
     }
 
     override fun onResume() {
         super.onResume()
+        activityResumed = true
+        routeMap?.onResume()
         if (screen == Screen.SCANNER) {
-            if (!LIVE_SCANNER_ENABLED) {
-                if (scannerPreview == null) render()
-                return
-            }
             val cameraGranted = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-            if (cameraGranted) scannerPermissionDenied = false
-            if (scannerPreview == null) render()
-            if (cameraGranted) startScannerCamera()
-            else if (!scannerPermissionInFlight && !scannerPermissionDenied) showCameraPermissionDenied()
+            if (cameraGranted) {
+                scannerPermissionDenied = false
+                scannerPermissionPermanentlyDenied = false
+                if (scannerPreview == null) render()
+                startScannerCamera()
+            } else if (!scannerPermissionInFlight) {
+                val asked = getSharedPreferences(PREFS_SCANNER, MODE_PRIVATE).getBoolean(KEY_CAMERA_ASKED, false)
+                if (!asked) requestScannerPermission()
+                else if (scannerPreview == null) {
+                    scannerPermissionPermanentlyDenied = !shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)
+                    scannerPermissionDenied = true
+                    render()
+                }
+            }
         }
     }
 
     override fun onPause() {
+        activityResumed = false
+        routeMap?.onPause()
         if (screen == Screen.SCANNER) stopScannerResources()
         super.onPause()
     }
 
+    override fun onStop() {
+        activityStarted = false
+        routeMap?.onStop()
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        releaseRouteMap()
         stopScannerResources()
         onBackInvokedDispatcher.unregisterOnBackInvokedCallback(backNavigationCallback)
         super.onDestroy()
@@ -273,7 +319,7 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     private fun updateCoverage() {
         val count = catalog.patterns.count { it.active && it.verificationStatus == VerificationStatus.VERIFIED }
         coverage.text = if (count > 0 && catalog.info.datasetVersion.startsWith("iloilo-jaro-wvsu-")) {
-            "Verified coverage: Jaro Plaza ↔ WVSU on Routes 3 and 10 only. Other routes and transfers are not covered."
+            "Jaro Plaza ↔ WVSU · Routes 3 and 10 only"
         } else if (count > 0) {
             "Verified coverage: $count supported route patterns. Other routes and transfers are not covered."
         } else {
@@ -282,6 +328,8 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     }
 
     private fun render() {
+        releaseRouteMap()
+        selectedPathButton = null
         content.removeAllViews()
         coverage.visibility = if (screen == Screen.HOME) View.VISIBLE else View.GONE
         findViewById<View>(R.id.app_back).visibility = if (screen == Screen.HOME || screen == Screen.EXPLORE) View.GONE else View.VISIBLE
@@ -339,24 +387,19 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     }
 
     private fun renderHome() {
-        addHeading(getString(R.string.plan_heading))
-        addBody(getString(R.string.plan_help))
-        val badge = label("COVERAGE").apply {
-            textSize = 12f
-            typeface = Typeface.create(typeface, Typeface.BOLD)
-            background = rounded(R.color.coverage_surface, R.color.coverage_surface, 8)
-            setPadding(dp(8), dp(4), dp(8), dp(4))
-        }
-        content.addView(badge, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        add(coverage)
-        addLocationField(getString(R.string.starting_point), "Origin", originText, R.id.home_origin) {
+        addHeading("Where are you going?")
+        addBody("Choose two places. We’ll show your routes.")
+        addLocationField(getString(R.string.starting_point), "Choose a place", originText, R.id.home_origin) {
             if (originText != it) { originText = it; selected = null; temporalTracker.invalidate() }
         }
-        addLocationField(getString(R.string.destination), getString(R.string.destination), destinationText, R.id.home_destination) {
+        addLocationField(getString(R.string.destination), "Choose a place", destinationText, R.id.home_destination) {
             if (destinationText != it) { destinationText = it; selected = null; temporalTracker.invalidate() }
         }
         addButton(getString(R.string.find_route)) { findRoutes() }
         statusMessage?.let { addBody(it) }
+        coverage.background = rounded(R.color.coverage_surface, R.color.coverage_surface, 12)
+        coverage.setPadding(dp(12), dp(12), dp(12), dp(12))
+        add(coverage)
     }
 
     private fun findRoutes() {
@@ -381,6 +424,7 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         val from = origin ?: return showStatus("Choose a supported origin.")
         val to = destination ?: return showStatus("Choose a supported destination.")
         if (from.id == to.id) return showStatus("Your origin and destination are the same. No ride is needed.")
+        resetMapCamera()
         results = planner.findDirectJourneys(from.id, to.id)
         selected = null
         if (results.isEmpty()) { statusMessage = null; go(Screen.NO_ROUTE); return }
@@ -389,9 +433,25 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     }
 
     private fun renderResults() {
-        addHeading("Your route")
+        addHeading("Your routes")
         addBody("${origin?.name.orEmpty()} → ${destination?.name.orEmpty()}")
-        results.forEach { match ->
+        val paths = results.map { match -> catalog.geometry.filter { it.patternId == match.patternId }.sortedBy(GeometryPoint::sequence) }
+        if (paths.any { it.size >= 2 }) {
+            val mapPaths = results.mapIndexed { index, match ->
+                val route = catalog.routes.first { it.id == match.routeId }
+                StreetMapPath(match.patternId, route.name.substringBefore(" —"), getColor(if (index % 2 == 0) R.color.blue else R.color.outcome_red), paths[index], incompleteMapEdges(match.patternId, paths[index]))
+            }
+            val match = selected ?: results.first()
+            addRouteMap(mapPaths, journeyMarkers(match), selected?.patternId)
+            addBody("Route lines follow mapped streets. The connector at Jaro Plaza is approximate; this is not turn-by-turn guidance.")
+            add(RouteDiagramView(this).apply {
+                routes = paths
+                background = rounded(R.color.neutral_surface, R.color.card_border, 16)
+                minimumHeight = dp(130)
+                contentDescription = "Offline schematic fallback of available route paths."
+            })
+        } else addBody("Route map unavailable. See the route descriptions below.")
+        results.forEachIndexed { index, match ->
             val pattern = catalog.patterns.first { it.id == match.patternId }
             val route = catalog.routes.first { it.id == match.routeId }
             val wrapper = LinearLayout(this).apply {
@@ -399,31 +459,37 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
                 background = rounded(R.color.card_white, R.color.card_border, 16)
                 clipToOutline = true
             }
-            wrapper.addView(View(this).apply { setBackgroundColor(getColor(R.color.marigold)) }, LinearLayout.LayoutParams(dp(7), ViewGroup.LayoutParams.MATCH_PARENT))
+            wrapper.addView(View(this).apply { setBackgroundColor(getColor(if (index % 2 == 0) R.color.blue else R.color.outcome_red)) }, LinearLayout.LayoutParams(dp(7), ViewGroup.LayoutParams.MATCH_PARENT))
             val card = verticalContainer()
             card.setPadding(dp(14), dp(12), dp(14), dp(12))
             val routeHeading = Regex("^Route\\s+\\d+", RegexOption.IGNORE_CASE).find(route.name)?.value ?: route.name
             card.addView(label(routeHeading).apply {
-                typeface = resources.getFont(R.font.barlow_condensed_bold)
-                textSize = 26f
+                typeface = Typeface.create(typeface, Typeface.BOLD)
+                textSize = 21f
+                setPadding(0, 0, 0, dp(2))
             })
             card.addView(label(pattern.direction).apply {
                 typeface = Typeface.create(typeface, Typeface.BOLD)
                 setTextColor(getColor(R.color.blue))
+                setPadding(0, dp(2), 0, dp(4))
             })
-            if (routeHeading != route.name) card.addView(label(route.name).apply { textSize = 14f })
-            card.addView(label("Board at ${locationName(match.boarding.locationId)}"))
-            card.addView(label("Get off at ${locationName(match.alighting.locationId)}"))
-            card.addView(label("Verified ${pattern.verificationDate}"))
-            val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            actions.addView(secondaryButton("See stops") { selected = match; detailsPatternOverride = null; detailsTextOnly = false; go(Screen.DETAILS) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
-            actions.addView(button("Scan sign") { selected = match; openScanner(neutral = false, returnTo = Screen.RESULTS) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            card.addView(actions)
+            var selectionButton: Button? = null
+            selectionButton = secondaryButton(if (selected?.patternId == match.patternId) "Selected on map" else "Show path on map") {
+                selected = match
+                routeMap?.selectPath(match.patternId, journeyMarkers(match))
+                selectedPathButton?.text = "Show path on map"
+                selectionButton?.text = "Selected on map"
+                selectedPathButton = selectionButton
+            }.apply { contentDescription = "Show $routeHeading path on map" }
+            if (selected?.patternId == match.patternId) selectedPathButton = selectionButton
+            card.addView(selectionButton)
+            card.addView(secondaryButton("More details") { selected = match; detailsPatternOverride = null; detailsTextOnly = false; go(Screen.DETAILS) }.apply {
+                contentDescription = "More details for $routeHeading"
+            })
             wrapper.addView(card, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             add(wrapper)
         }
         statusMessage?.let { addBody(it) }
-        addButton("Back to plan") { go(Screen.HOME) }
     }
 
     private fun renderNoRoute() {
@@ -447,14 +513,28 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         addHeading("Stops and direction")
         route?.let { addBody(it.name) }
         addBody("Direction: ${pattern.direction}. ${pattern.branchHeadsign}")
-        val pathPoints = catalog.geometry.filter { it.patternId == pattern.id }.sortedBy(GeometryPoint::sequence)
+        val patternPoints = catalog.geometry.filter { it.patternId == pattern.id }.sortedBy(GeometryPoint::sequence)
+        val pathPoints = match?.let { routeSegment(patternPoints, it.boarding.sequence, it.alighting.sequence) } ?: patternPoints
         if (pathPoints.size >= 2 && !detailsTextOnly) {
+            val routeName = route?.name?.substringBefore(" —") ?: "Route"
+            val markers = if (match != null) listOf(
+                routeMarker("Board · ${locationName(match.boarding.locationId)}", pattern.id, match.boarding.sequence, R.color.marigold),
+                routeMarker("Get off · ${locationName(match.alighting.locationId)}", pattern.id, match.alighting.sequence, R.color.outcome_green),
+            ) else catalog.occurrences.filter { it.patternId == pattern.id }.sortedBy(StopOccurrence::sequence).mapNotNull { stop ->
+                when {
+                    stop.boardingAllowed -> routeMarker("Board · ${locationName(stop.locationId)}", pattern.id, stop.sequence, R.color.marigold)
+                    stop.alightingAllowed -> routeMarker("Get off · ${locationName(stop.locationId)}", pattern.id, stop.sequence, R.color.outcome_green)
+                    else -> null
+                }
+            }
+            addRouteMap(listOf(StreetMapPath(pattern.id, routeName, getColor(R.color.blue), pathPoints, incompleteMapEdges(pattern.id, pathPoints))), markers, pattern.id)
+            addBody("Street map · pan and pinch to zoom. Dashed amber sections are approximate connectors; do not use this map as turn-by-turn guidance.")
             val diagram = RouteDiagramView(this).apply {
                 points = pathPoints
                 boardingSequence = match?.boarding?.sequence
                 alightingSequence = match?.alighting?.sequence
                 background = rounded(R.color.card_white, R.color.card_border, 16)
-                contentDescription = "Directional route diagram. The ordered stop list below gives the route direction and selected stops."
+                contentDescription = "Offline schematic fallback. The ordered stop list below gives direction and selected stops."
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 minimumHeight = dp(160)
             }
@@ -479,10 +559,6 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         }
         addBody("Source: ${catalog.sources.firstOrNull { it.id == pattern.sourceRef }?.description ?: "Unavailable"}")
         addBody("Verified: ${pattern.verificationDate}")
-        addButton("Scan a sign") {
-            openScanner(neutral = match == null, returnTo = if (match == null) Screen.EXPLORE else Screen.DETAILS)
-        }
-        addButton("Back") { go(detailsBackScreen()) }
     }
 
     private fun detailsBackScreen(): Screen =
@@ -495,7 +571,6 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
             showExploreMatches(query)
         }
         add(search)
-        addButton("Scan a sign") { openScanner(neutral = true, returnTo = Screen.EXPLORE) }
         showExploreMatches(search.text.toString())
     }
 
@@ -530,7 +605,8 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         addAboutSection("Coverage", listOf(
             "Coverage is limited to the Jaro Plaza–WVSU corridor on Routes 3 and 10. The route maps show streets, not schedules or service frequency.",
             "Verified route patterns: ${catalog.patterns.count { it.active && it.verificationStatus == VerificationStatus.VERIFIED }}",
-            "The offline route diagram is schematic, not turn-by-turn navigation. Camera access is requested only when scanning. Frames and OCR stay in memory.",
+            "The interactive street map uses MapLibre and OpenFreeMap Liberty tiles over the internet. It uses network-state access to handle tile availability. Manual routes and stops stay local; ParaPo does not upload camera frames.",
+            "Camera preview works independently of route recognition. Recognition remains disabled after the latest ONNX parity check failed. Camera access is requested only from Scan.",
         ))
         addAboutSection("Route data", listOf(
             "Dataset version: ${catalog.info.datasetVersion}",
@@ -539,9 +615,9 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         ))
         addAboutSection("App and scanner", listOf(
             "App version: ${BuildConfig.VERSION_NAME}",
-            "Live scanning is unavailable until export parity is resolved. Manual planning remains available.",
+            "Camera preview is available independently. Recognition remains unavailable because ONNX export parity failed. Manual planning remains available.",
             "Recognition model: ${if (modelAvailable) ScannerPipeline.MODEL_VERSION else "Unavailable — local model asset missing"}",
-            "Model check: 0/3 M3 test signs detected; ONNX export parity failed. Phone smoke inference ran on a synthetic image; sign accuracy is unverified.",
+            "Model check: latest v10 validation used three photos; export parity failed and no v10 test-set inference ran. Recognition is disabled.",
             "Model SHA-256: ${if (modelAvailable) EXPECTED_MODEL_HASH else "not available"}",
             "Inference runtime: ${ScannerPipeline.RUNTIME_VERSION}",
             "Offline OCR: ${ScannerPipeline.OCR_VERSION}",
@@ -565,43 +641,31 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     }
 
     private fun renderScanner() {
-        addHeading(if (LIVE_SCANNER_ENABLED) "Scan a route sign" else "Scanner unavailable")
-        if (LIVE_SCANNER_ENABLED) addBody("Scan while stationary at a verified boarding area. Aim at one sign and select its outline.")
-        else addBody("You can still browse routes and stops without the camera.")
-        if (scannerNeutral) addBody("No trip is selected. Browse routes to see their stops.")
+        addHeading("Scan a route sign")
+        addBody(if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            "Camera preview is available. Route recognition is currently unavailable, so use the route cards and stops below."
+        } else "Allow camera access to preview a sign. Route recognition is currently unavailable; manual planning works without camera access.")
+        if (scannerNeutral) addBody(if (scannerReturnScreen == Screen.RESULTS) "Your trip is saved. Scan results won't assume a route." else "No trip is selected. Browse routes to see their stops.")
         else selected?.let { match ->
             val route = catalog.routes.firstOrNull { it.id == match.routeId }
             val pattern = catalog.patterns.firstOrNull { it.id == match.patternId }
-            addBody("${if (LIVE_SCANNER_ENABLED) "Checking" else "Your route:"} ${route?.name.orEmpty()} · ${pattern?.direction.orEmpty()}")
+            addBody("Your route: ${route?.name.orEmpty()} · ${pattern?.direction.orEmpty()}")
             addBody("Board at ${locationName(match.boarding.locationId)}; get off at ${locationName(match.alighting.locationId)}.")
         }
-        scannerStatus = label("Camera scanner starting…")
+        scannerStatus = label("Camera preview is starting…")
         add(scannerStatus!!)
-        if (!LIVE_SCANNER_ENABLED) {
-            updateScannerStatus(LIVE_SCANNER_UNAVAILABLE, Color.GRAY)
-            addScannerManualActions()
-            return
-        }
-        if (scannerPermissionDenied) {
-            updateScannerStatus("? Camera permission denied — manual planning is still available", Color.GRAY)
-            addScannerManualActions()
-            addButton("Try camera permission again") { requestScannerPermission() }
-            addButton("Open app settings") {
-                startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = android.net.Uri.fromParts("package", packageName, null)
-                })
-            }
-            return
-        }
-        if (scannerUnavailableReason != null) {
-            updateScannerStatus("? ${scannerUnavailableReason}", Color.GRAY)
-            addScannerManualActions()
-            return
-        }
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            updateScannerStatus("Camera access is needed for scanning. Manual planning works without it.", Color.GRAY)
+            updateScannerStatus("Camera permission is needed for preview. Manual planning works without it.", Color.GRAY)
             addScannerManualActions()
-            addButton("Allow camera") { requestScannerPermission() }
+            if (scannerPermissionPermanentlyDenied) {
+                addButton("Open app settings") {
+                    startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = android.net.Uri.fromParts("package", packageName, null)
+                    })
+                }
+            } else {
+                addButton(if (scannerPermissionDenied) "Try camera permission again" else "Allow camera") { requestScannerPermission() }
+            }
             return
         }
 
@@ -612,20 +676,18 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
             scaleType = PreviewView.ScaleType.FILL_CENTER
             contentDescription = "Live camera preview. Point at one route sign while stationary."
         }
-        val overlay = ScannerOverlayView(this).apply {
-            onSelectBox = ::selectScannerTarget
-        }
         previewBox.addView(preview, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        previewBox.addView(overlay, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         add(previewBox)
         scannerPreview = preview
-        scannerOverlay = overlay
-        addButton("Select centered sign") { selectCenteredScannerTarget() }
+        scannerOverlay = null
+        if (scannerUnavailableReason != null) {
+            updateScannerStatus(scannerUnavailableReason!!, Color.GRAY)
+            addButton("Try camera again") { scannerUnavailableReason = null; scannerBound = false; startScannerCamera() }
+        }
         scannerActions = verticalContainer()
         content.addView(scannerActions)
-        scannerOverlay?.update(scannerBoxes, scannerSelectedBox, scannerFrameWidth, scannerFrameHeight)
         addScannerManualActions()
-        if (scannerPipeline == null && !scannerStarting && !scannerBound) startScannerCamera()
+        if (!scannerStarting && !scannerBound) startScannerCamera()
     }
 
     private fun addScannerManualActions() {
@@ -634,6 +696,56 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
             actions.removeAllViews()
             actions.addView(button(scanReturnLabel) { go(scannerReturnScreen) })
         } ?: addButton(scanReturnLabel) { go(scannerReturnScreen) }
+    }
+
+    private fun addRouteMap(paths: List<StreetMapPath>, markers: List<StreetMapMarker>, selectedPathId: String?) {
+        val camera = when (screen) {
+            Screen.RESULTS -> resultsMapCamera
+            Screen.DETAILS -> detailsMapCamera
+            else -> null
+        }
+        val map = RouteStreetMapView(this, paths, markers, selectedPathId, camera) { position ->
+            when (screen) {
+                Screen.RESULTS -> resultsMapCamera = position
+                Screen.DETAILS -> detailsMapCamera = position
+                else -> Unit
+            }
+        }.apply {
+            background = rounded(R.color.neutral_surface, R.color.card_border, 16)
+            contentDescription = "Interactive street map with supported jeepney route paths and journey stops"
+        }
+        routeMap = map
+        content.addView(map, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(240)).apply { bottomMargin = dp(8) })
+        if (activityStarted) map.onStart()
+        if (activityResumed) map.onResume()
+    }
+
+    private fun routeMarker(label: String, patternId: String, sequence: Int, color: Int): StreetMapMarker {
+        val point = catalog.geometry.firstOrNull { it.patternId == patternId && it.stopOccurrenceSequence == sequence }
+        val occurrence = catalog.occurrences.firstOrNull { it.patternId == patternId && it.sequence == sequence }
+        val location = occurrence?.let { catalog.locations.firstOrNull { loc -> loc.id == it.locationId } }
+        return StreetMapMarker(label, point ?: GeometryPoint(patternId, sequence, location?.latitude ?: 10.7237, location?.longitude ?: 122.5565, sequence), getColor(color))
+    }
+
+    private fun journeyMarkers(match: JourneyMatch) = listOf(
+        routeMarker("Board · ${locationName(match.boarding.locationId)}", match.patternId, match.boarding.sequence, R.color.marigold),
+        routeMarker("Get off · ${locationName(match.alighting.locationId)}", match.patternId, match.alighting.sequence, R.color.outcome_green),
+    )
+
+    private fun incompleteMapEdges(patternId: String, points: List<GeometryPoint>): Set<Int> = when (patternId) {
+        "ILO-03-JARO-TO-WVSU", "ILO-10-JARO-TO-WVSU" -> if (patternId.startsWith("ILO-10")) setOf(0, 9) else setOf(0)
+        "ILO-03-WVSU-TO-JARO" -> setOf(points.lastIndex - 1)
+        "ILO-10-WVSU-TO-JARO" -> setOf(points.lastIndex - 1, points.lastIndex - 10)
+        else -> emptySet()
+    }.filter { it in 0 until points.lastIndex }.toSet()
+
+    private fun releaseRouteMap() {
+        routeMap?.let { map ->
+            if (activityResumed) map.onPause()
+            if (activityStarted) map.onStop()
+            map.onDestroy()
+        }
+        routeMap = null
     }
 
     private fun renderScannerActions(decision: ScannerDecision?) {
@@ -680,8 +792,12 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         if (screen == Screen.SCANNER) stopScannerResources()
         scannerNeutral = neutral
         scannerReturnScreen = returnTo
-        scanReturnLabel = scannerReturnLabel(neutral, returnTo)
+        scanReturnLabel = scannerReturnLabel(returnTo)
         scannerPermissionDenied = false
+        scannerPermissionPermanentlyDenied = checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED &&
+            getSharedPreferences(PREFS_SCANNER, MODE_PRIVATE).getBoolean(KEY_CAMERA_ASKED, false) &&
+            !shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)
+        scannerPermissionDenied = scannerPermissionPermanentlyDenied
         scannerUnavailableReason = null
         scannerBoxes = emptyList()
         scannerSelectedBox = null
@@ -693,63 +809,63 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         scannerSessionId = temporalTracker.beginSession(scannerContextKey)
         screen = Screen.SCANNER
         render()
-        if (!LIVE_SCANNER_ENABLED) return
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startScannerCamera()
-        } else requestScannerPermission()
+        } else if (!scannerPermissionPermanentlyDenied) requestScannerPermission()
     }
 
-    private fun scannerReturnLabel(neutral: Boolean, returnTo: Screen): String =
-        when { neutral -> "Back to Explore"; returnTo == Screen.DETAILS -> "Back to stops"; else -> "See my routes" }
+    private fun scannerReturnLabel(returnTo: Screen): String =
+        when (returnTo) { Screen.DETAILS -> "Back to stops"; Screen.RESULTS -> "See my routes"; Screen.EXPLORE -> "Back to Explore"; else -> "Back to Home" }
 
     private fun requestScannerPermission() {
         if (scannerPermissionInFlight) return
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) return startScannerCamera()
         scannerPermissionDenied = false
+        getSharedPreferences(PREFS_SCANNER, MODE_PRIVATE).edit().putBoolean(KEY_CAMERA_ASKED, true).apply()
         scannerPermissionInFlight = true
-        updateScannerStatus("Camera permission is requested only for sign scanning.", Color.GRAY)
         cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
     }
 
     private fun showCameraPermissionDenied() {
         scannerPermissionInFlight = false
         scannerPermissionDenied = true
+        scannerPermissionPermanentlyDenied = !shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)
         scannerUnavailableReason = null
         if (screen == Screen.SCANNER) render()
     }
 
     private fun startScannerCamera() {
-        if (!LIVE_SCANNER_ENABLED || screen != Screen.SCANNER || scannerStarting || scannerBound ||
+        val previewView = scannerPreview ?: return
+        if (screen != Screen.SCANNER || scannerStarting || scannerBound ||
             checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
         ) return
         scannerStarting = true
         scannerPermissionInFlight = false
         scannerUnavailableReason = null
-        scannerContextKey = contextKey()
-        scannerSessionId = temporalTracker.beginSession(scannerContextKey)
-        updateScannerStatus("Loading bundled detector and starting camera…", Color.GRAY)
-        val currentPipeline = ScannerPipeline(this, this)
-        scannerPipeline = currentPipeline
-        currentPipeline.updateContext(scannerSessionId, scannerContextKey)
+        scannerBoxes = emptyList()
+        scannerSelectedBox = null
+        scannerTargetId = null
+        lastScannerDecision = null
+        val generation = ++scannerGeneration
+        scannerSessionId = temporalTracker.beginSession(contextKey())
+        updateScannerStatus("Starting camera preview…", Color.GRAY)
         val providerFuture = ProcessCameraProvider.getInstance(this)
         providerFuture.addListener({
-            if (screen != Screen.SCANNER || scannerPipeline !== currentPipeline) return@addListener
+            if (generation != scannerGeneration || screen != Screen.SCANNER || scannerPreview !== previewView) return@addListener
             try {
                 val provider = providerFuture.get()
-                val previewView = scannerPreview ?: error("Preview is unavailable")
                 val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
-                val analysis = ImageAnalysis.Builder()
-                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .build()
-                currentPipeline.setAnalyzer(analysis)
-                provider.unbindAll()
-                provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
+                provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview)
                 cameraProvider = provider
                 scannerBound = true
                 scannerStarting = false
-                updateScannerStatus("Aim at one sign. Tap its outline or center it and select it.", Color.DKGRAY)
+                scannerUnavailableReason = null
+                updateScannerStatus("Camera ready. Route recognition is currently unavailable.", Color.GRAY)
             } catch (_: Exception) {
                 scannerStarting = false
-                showScannerUnavailable("Camera is unavailable. Your journey is saved for manual planning.")
+                scannerUnavailableReason = "Camera is unavailable or already in use. You can retry or keep planning manually."
+                updateScannerStatus(scannerUnavailableReason!!, Color.GRAY)
+                if (screen == Screen.SCANNER) renderScannerActions(null)
             }
         }, ContextCompat.getMainExecutor(this))
     }
@@ -796,12 +912,18 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
 
     private fun showScannerUnavailable(reason: String) {
         scannerUnavailableReason = reason
-        stopCameraBinding()
+        scannerBoxes = emptyList()
+        scannerSelectedBox = null
+        scannerTargetId = null
+        lastScannerDecision = null
+        temporalTracker.invalidate()
+        scannerOverlay?.update(emptyList(), null, 0, 0)
         updateScannerStatus("? $reason", Color.GRAY)
         renderScannerActions(null)
     }
 
     private fun stopCameraBinding() {
+        scannerGeneration++
         cameraProvider?.unbindAll()
         cameraProvider = null
         scannerPipeline?.close()
@@ -850,6 +972,7 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     }
 
     override fun onModelReady(modelHash: String) {
+        if (screen != Screen.SCANNER || scannerPipeline == null) return
         scannerModelHash = modelHash
         if (screen == Screen.SCANNER && scannerUnavailableReason == null) {
             updateScannerStatus("Experimental detector ready. Tap one sign outline to read it.", Color.DKGRAY)
@@ -857,6 +980,7 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     }
 
     override fun onModelUnavailable(reason: String) {
+        if (screen != Screen.SCANNER || scannerPipeline == null) return
         scannerModelHash = ""
         showScannerUnavailable(reason)
     }
@@ -871,7 +995,7 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         frameWidth: Int,
         frameHeight: Int,
     ) {
-        if (screen != Screen.SCANNER || sessionId != scannerSessionId || contextKey != scannerContextKey) return
+        if (screen != Screen.SCANNER || scannerPipeline == null || sessionId != scannerSessionId || contextKey != scannerContextKey) return
         analyzedFrameCount++
         scannerBoxes = boxes
         scannerFrameWidth = frameWidth
@@ -895,7 +1019,7 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     }
 
     override fun onText(sessionId: Long, contextKey: String, targetId: String, captureElapsedMs: Long, text: String) {
-        if (screen != Screen.SCANNER || !temporalTracker.acceptsCallback(sessionId, contextKey, targetId)) return
+        if (screen != Screen.SCANNER || scannerPipeline == null || !temporalTracker.acceptsCallback(sessionId, contextKey, targetId)) return
         recognizedCropCount++
         val routeResolution = ScannerDecisions.routeFromText(text, catalog)
         val routeId = (routeResolution as? RouteTextResolution.Found)?.routeId
@@ -945,6 +1069,7 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     }
 
     override fun onFailure() {
+        if (screen != Screen.SCANNER || scannerPipeline == null) return
         temporalTracker.invalidate()
         lastScannerDecision = null
         showScannerUnavailable("Inference failed. Return to manual planning and try again later.")
@@ -996,6 +1121,7 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
     }
 
     private fun go(next: Screen) {
+        if (next == Screen.DETAILS && screen != Screen.DETAILS) detailsMapCamera = null
         if (screen != next) {
             currentFocus?.let { focused ->
                 (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(focused.windowToken, 0)
@@ -1005,6 +1131,12 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         if (screen == Screen.SCANNER && next != Screen.SCANNER) stopScannerResources()
         screen = next
         render()
+        findViewById<android.widget.ScrollView>(R.id.screen_scroll).scrollTo(0, 0)
+    }
+
+    private fun resetMapCamera() {
+        resultsMapCamera = null
+        detailsMapCamera = null
     }
 
     private fun editField(hintText: String, value: String, id: Int, onChange: (String) -> Unit): EditText = AutoCompleteTextView(this).apply {
@@ -1041,9 +1173,9 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
             val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
             row.addView(field, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             row.addView(TextView(this@MainActivity).apply {
-                text = getString(R.string.change); textSize = 14f; setTextColor(getColor(R.color.blue)); minHeight = resources.getDimensionPixelSize(R.dimen.minimum_touch_target)
+                text = if (value.isBlank()) "Choose" else getString(R.string.change); textSize = 16f; setTextColor(getColor(R.color.blue)); minHeight = resources.getDimensionPixelSize(R.dimen.minimum_touch_target)
                 gravity = android.view.Gravity.CENTER; setPadding(dp(10), 0, dp(10), 0)
-                contentDescription = getString(R.string.change_place, title); isClickable = true; isFocusable = true
+                contentDescription = "$text $title"; isClickable = true; isFocusable = true
                 val highlight = android.util.TypedValue()
                 if (theme.resolveAttribute(android.R.attr.selectableItemBackground, highlight, true)) setBackgroundResource(highlight.resourceId)
                 setOnClickListener { openLocationSearch(id == R.id.home_origin) }
@@ -1058,20 +1190,28 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
             setTextColor(getColor(R.color.blue))
             background = RippleDrawable(ColorStateList.valueOf(0x443F6FAA), rounded(R.color.card_white, R.color.blue, 14), null)
         }
-        parent.addView(control, LinearLayout.LayoutParams(0, dp(52), 1f).apply { marginEnd = dp(8) })
+        parent.addView(control, LinearLayout.LayoutParams(0, dp(64), 1f).apply { if (parent.childCount < 2) marginEnd = dp(6) })
     }
 
     private fun updateNavigation() {
         val nav = findViewById<LinearLayout>(R.id.navigation)
-        if (nav.childCount < 2) return
+        if (nav.childCount < 3) return
         val explore = screen == Screen.EXPLORE || (screen == Screen.DETAILS && detailsBackScreen() == Screen.EXPLORE) || (screen == Screen.SCANNER && scannerNeutral) || (screen == Screen.ABOUT && aboutReturnScreen == Screen.EXPLORE)
         for (i in 0 until nav.childCount) {
             val control = nav.getChildAt(i) as Button
-            val active = (i == 1) == explore
+            val active = when (i) { 0 -> !explore && screen != Screen.SCANNER; 1 -> screen == Screen.SCANNER; else -> explore && screen != Screen.SCANNER }
             control.isSelected = active
             control.contentDescription = if (active) "${control.text}, current tab" else control.text
             control.setTextColor(if (active) Color.WHITE else getColor(R.color.blue))
-            control.background = RippleDrawable(ColorStateList.valueOf(0x443F6FAA), if (active) rounded(R.color.blue, R.color.blue, 14) else rounded(R.color.card_white, R.color.blue, 14), null)
+            control.background = RippleDrawable(ColorStateList.valueOf(0x443F6FAA), if (active || i == 1) rounded(R.color.blue, R.color.blue, 16) else rounded(R.color.card_white, R.color.card_border, 16), null)
+            if (i == 1) {
+                control.setTextColor(Color.WHITE)
+                control.setCompoundDrawablesWithIntrinsicBounds(0, R.drawable.ic_camera, 0, 0)
+                control.compoundDrawablePadding = 0
+                control.setPadding(dp(4), dp(5), dp(4), dp(5))
+                control.textSize = 14f
+                control.contentDescription = if (active) "Scan a jeepney sign, current screen" else "Scan a jeepney sign"
+            }
         }
     }
 
@@ -1157,11 +1297,13 @@ class MainActivity : ComponentActivity(), ScannerPipeline.Listener {
         private const val KEY_ALIGHT = "alight"
         private const val KEY_SCANNER_NEUTRAL = "scanner_neutral"
         private const val KEY_SCANNER_RETURN = "scanner_return"
+        private const val KEY_RESULTS_MAP_CAMERA = "results_map_camera"
+        private const val KEY_DETAILS_MAP_CAMERA = "details_map_camera"
         private const val EXPLORE_LIST_TAG = "explore-list"
         private const val LOCATION_LIST_TAG = "location-list"
         private const val MAX_RECORDED_LATENCIES = 100
         private const val EXPECTED_MODEL_HASH = "183a212b84273fc58870bf4dfd10bb76f52cecabf9e0c7ac5b8f1d01563116d8"
-        private const val LIVE_SCANNER_ENABLED = false // shortcut: export parity is unresolved; enable after a successful PyTorch comparison.
-        private const val LIVE_SCANNER_UNAVAILABLE = "Scanner is unavailable right now. You can still see your routes and stops."
+        private const val PREFS_SCANNER = "scanner_permissions"
+        private const val KEY_CAMERA_ASKED = "camera_asked"
     }
 }

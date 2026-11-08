@@ -7,4 +7,5 @@ import com.parapo.prototype.data.RouteCatalog
 
 class ParapoApplication : Application() {
     internal var catalogLoader: (Context) -> RouteCatalog? = { RouteBundleStore(it).load() }
+
 }

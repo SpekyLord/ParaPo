@@ -82,10 +82,21 @@ class RouteBundleStoreTest {
 
     @Test fun startupRecoversLastValidDatabaseIfCurrentFileIsDamaged() {
         val store = RouteBundleStore(context)
-        assertEquals(BundleReplaceResult.Installed, store.replaceBundle(bundle("test-1")))
-        assertEquals(BundleReplaceResult.Installed, store.replaceBundle(bundle("test-2")))
+        assertEquals(BundleReplaceResult.Installed, store.replaceBundle(bundle("test-1", date = "2026-11-09")))
+        assertEquals(BundleReplaceResult.Installed, store.replaceBundle(bundle("test-2", date = "2026-11-10")))
         File(context.filesDir, "routes.sqlite").writeText("damaged")
         assertEquals("test-1", RouteBundleStore(context).load()?.info?.datasetVersion)
+    }
+
+    @Test fun newerRouteBundleUpdatesExistingInstallAndOlderBundleCannotRollItBack() {
+        val store = RouteBundleStore(context)
+        assertEquals(BundleReplaceResult.Installed, store.replaceBundle(bundle("older-installed", date = "2026-11-09")))
+        assertEquals(BundleReplaceResult.Installed, store.replaceBundle(bundle("new-data", date = "2026-11-10")))
+        assertTrue(store.replaceBundle(bundle("old-apk", date = "2026-11-08")) is BundleReplaceResult.Rejected)
+        assertTrue(store.replaceBundle(bundle("same-day-different-data", date = "2026-11-10")) is BundleReplaceResult.Rejected)
+        assertTrue(store.replaceBundle(bundle("new-data", date = "2026-11-10", mutation = listOf("UPDATE locations SET latitude=10.2 WHERE id='SYN-A'"))) is BundleReplaceResult.Rejected)
+        assertEquals(BundleReplaceResult.Unchanged, store.replaceBundle(bundle("new-data", date = "2026-11-10")))
+        assertEquals("new-data", RouteBundleStore(context).load()?.info?.datasetVersion)
     }
 
     private fun bundle(
@@ -94,14 +105,15 @@ class RouteBundleStoreTest {
         databaseBytes: ByteArray? = null,
         mutation: List<String> = emptyList(),
         duplicateSources: Boolean = false,
+        date: String = "2026-11-09",
     ): InputStream {
-        val sqlite = databaseBytes ?: validDatabase(version, mutation)
+        val sqlite = databaseBytes ?: validDatabase(version, mutation, date)
         val digest = sha256(sqlite)
         val sources = JSONArray().put("SYN-SOURCE").apply { if (duplicateSources) put("SYN-SOURCE") }
         val manifest = JSONObject()
             .put("schemaVersion", 1)
             .put("datasetVersion", version)
-            .put("publicationDate", "2026-11-06")
+            .put("publicationDate", date)
             .put("sources", sources)
             .put("sqliteSha256", if (wrongHash) "0".repeat(64) else digest)
             .toString().toByteArray()
@@ -113,7 +125,7 @@ class RouteBundleStoreTest {
         return ByteArrayInputStream(output.toByteArray())
     }
 
-    private fun validDatabase(version: String, mutation: List<String> = emptyList()): ByteArray {
+    private fun validDatabase(version: String, mutation: List<String> = emptyList(), date: String = "2026-11-09"): ByteArray {
         val file = File(context.cacheDir, "${System.nanoTime()}.sqlite")
         val db = SQLiteDatabase.openOrCreateDatabase(file, null)
         try {
@@ -121,7 +133,7 @@ class RouteBundleStoreTest {
             db.execSQL("PRAGMA foreign_keys=ON")
             db.insertOrThrow("dataset_info", null, ContentValues().apply {
                 put("id", 1); put("schema_version", 1); put("dataset_version", version)
-                put("publication_date", "2026-11-06"); put("source_refs_json", "[\"SYN-SOURCE\"]")
+                put("publication_date", date); put("source_refs_json", "[\"SYN-SOURCE\"]")
             })
             db.insertOrThrow("source_records", null, ContentValues().apply {
                 put("id", "SYN-SOURCE"); put("description", "Test fixture only"); put("reference", "test-only"); put("contact_role", "test fixture")

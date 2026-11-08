@@ -15,6 +15,8 @@ class RouteDiagramView @JvmOverloads constructor(
 ) : View(context, attrs) {
     var points: List<GeometryPoint> = emptyList()
         set(value) { field = value; invalidate() }
+    var routes: List<List<GeometryPoint>> = emptyList()
+        set(value) { field = value; invalidate() }
     var boardingSequence: Int? = null
         set(value) { field = value; invalidate() }
     var alightingSequence: Int? = null
@@ -25,12 +27,14 @@ class RouteDiagramView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        if (points.size < 2) return
+        val paths = routes.ifEmpty { listOf(points) }
+        val allPoints = paths.filter { it.size >= 2 }.flatten()
+        if (allPoints.isEmpty()) return
         val pad = dp(24f)
-        val minX = points.minOf { it.longitude }
-        val maxX = points.maxOf { it.longitude }
-        val minY = points.minOf { it.latitude }
-        val maxY = points.maxOf { it.latitude }
+        val minX = allPoints.minOf { it.longitude }
+        val maxX = allPoints.maxOf { it.longitude }
+        val minY = allPoints.minOf { it.latitude }
+        val maxY = allPoints.maxOf { it.latitude }
         val spanX = (maxX - minX).takeIf { it > 0.0 } ?: 1.0
         val spanY = (maxY - minY).takeIf { it > 0.0 } ?: 1.0
         val scale = minOf((width - 2 * pad) / spanX.toFloat(), (height - 2 * pad) / spanY.toFloat())
@@ -40,11 +44,16 @@ class RouteDiagramView @JvmOverloads constructor(
         val top = (height - usedHeight) / 2f
         fun x(point: GeometryPoint) = left + ((point.longitude - minX) / spanX).toFloat() * usedWidth
         fun y(point: GeometryPoint) = height - top - ((point.latitude - minY) / spanY).toFloat() * usedHeight
-        val path = Path().apply {
-            moveTo(x(points.first()), y(points.first()))
-            points.drop(1).forEach { lineTo(x(it), y(it)) }
+        paths.forEachIndexed { index, route ->
+            if (route.size < 2) return@forEachIndexed
+            val path = Path().apply {
+                moveTo(x(route.first()), y(route.first()))
+                route.drop(1).forEach { lineTo(x(it), y(it)) }
+            }
+            linePaint.color = context.getColor(if (index % 2 == 0) R.color.blue else R.color.outcome_red)
+            canvas.drawPath(path, linePaint)
         }
-        canvas.drawPath(path, linePaint)
+        if (routes.isNotEmpty()) return
         if (boardingSequence == null && alightingSequence == null) {
             dotPaint.color = context.getColor(R.color.blue)
             canvas.drawCircle(x(points.first()), y(points.first()), dp(7f), dotPaint)

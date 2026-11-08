@@ -15,7 +15,7 @@ android {
         applicationId = "com.parapo.prototype"
         minSdk = 34
         targetSdk = 36
-        versionCode = 1
+        versionCode = 2
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -48,6 +48,7 @@ dependencies {
     implementation("androidx.camera:camera-core:1.5.3")
     implementation("androidx.camera:camera-lifecycle:1.5.3")
     implementation("androidx.camera:camera-view:1.5.3")
+    implementation("org.maplibre.gl:android-sdk:13.7.1")
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.1")
 

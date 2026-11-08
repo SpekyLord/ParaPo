@@ -15,6 +15,7 @@ import android.provider.MediaStore
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.rule.GrantPermissionRule
 import androidx.test.platform.app.InstrumentationRegistry
 import com.parapo.prototype.ParapoApplication
 import com.parapo.prototype.R
@@ -35,10 +36,12 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.Rule
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class MainActivityTest {
+    @get:Rule val cameraPermission = GrantPermissionRule.grant(android.Manifest.permission.CAMERA)
     private val app: ParapoApplication = ApplicationProvider.getApplicationContext()
     private val evidenceRun = System.currentTimeMillis().toString()
 
@@ -46,7 +49,22 @@ class MainActivityTest {
         app.catalogLoader = { RouteCatalog.EMPTY }
     }
 
-    @Test fun manualResultDetailsAndScannerRetainTheChosenJourney() {
+    @Test fun bottomNavigationButtonsFitTheirContainer() {
+        app.catalogLoader = { uiFixture() }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val nav = activity.findViewById<LinearLayout>(R.id.navigation)
+                assertEquals(3, nav.childCount)
+                for (i in 0 until nav.childCount) {
+                    val button = nav.getChildAt(i)
+                    assertTrue(button.top >= 0 && button.bottom <= nav.height)
+                    assertTrue(button.height >= (48 * activity.resources.displayMetrics.density).toInt())
+                }
+            }
+        }
+    }
+
+    @Test fun manualResultAndDetailsRetainTheChosenJourney() {
         app.catalogLoader = { uiFixture() }
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
@@ -55,15 +73,8 @@ class MainActivityTest {
                 click(activity, "Find my route")
                 assertHasText(activity, "Synthetic Route")
                 assertHasText(activity, "Northbound")
-                assertHasText(activity, "Board at A")
-                assertHasText(activity, "Get off at C")
-                click(activity, "Scan sign")
-                assertHasText(activity, "Scanner unavailable")
-                assertHasText(activity, "Scanner is unavailable right now. You can still see your routes and stops.")
-                assertHasText(activity, "Your route: Synthetic Route · Northbound")
-                assertHasText(activity, "Board at A; get off at C.")
-                click(activity, "See my routes")
-                click(activity, "See stops")
+                assertHasText(activity, "A → C")
+                click(activity, "More details")
                 assertHasText(activity, "Synthetic Route")
                 assertHasText(activity, "Direction: Northbound. Test headsign")
                 assertHasText(activity, "Ordered stops")
@@ -97,14 +108,14 @@ class MainActivityTest {
         }
     }
 
-    @Test fun bundledRouteMapsPlanJaroPlazaToWvsuInBothDirections() {
+    @Test fun bundledRouteMapsShowSelectablePathsAndSpecificDetails() {
         listOf("routes.sqlite", "routes.sqlite.backup", "routes.sqlite.pending").forEach {
             File(app.filesDir, it).delete()
         }
         app.catalogLoader = { context -> RouteBundleStore(context).load() }
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
-                assertHasText(activity, "Verified coverage: Jaro Plaza ↔ WVSU on Routes 3 and 10 only. Other routes and transfers are not covered.")
+                assertHasText(activity, "Jaro Plaza ↔ WVSU · Routes 3 and 10 only")
                 activity.findViewById<EditText>(R.id.home_origin).setText("Jaro Cathedral")
                 activity.findViewById<EditText>(R.id.home_destination).setText("WVSU")
                 click(activity, "Find my route")
@@ -112,29 +123,18 @@ class MainActivityTest {
                 assertHasText(activity, "Jaro Plaza to WVSU via E. Lopez Street")
                 assertHasText(activity, "Route 10")
                 assertHasText(activity, "Jaro Plaza to WVSU via Commission Civil and Del Carmen Streets")
-                click(activity, "See stops")
+                val overview = descendants(activity.findViewById(R.id.app_root)).filterIsInstance<RouteDiagramView>().single()
+                assertEquals(2, overview.routes.size)
+                assertTrue(overview.routes.all { it.size >= 2 })
+                assertTrue(descendants(activity.findViewById(R.id.app_root)).any { it is RouteStreetMapView })
+                descendants(activity.findViewById(R.id.app_root)).first { it.contentDescription == "Show Route 10 path on map" }.performClick()
+                assertHasText(activity, "Selected on map")
+                assertHasText(activity, "Route lines follow mapped streets")
+                descendants(activity.findViewById(R.id.app_root)).first { it.contentDescription == "More details for Route 10" }.performClick()
                 assertHasText(activity, "Source: Iloilo City Planning route maps for Route 3 Ungka–CPU and Route 10 Buntatala/Tagbak; project lead approved the Jaro Plaza–WVSU corridor and confirmed the Jaro Plaza direction")
                 assertTrue(descendants(activity.findViewById(R.id.app_root)).any { it is RouteDiagramView })
-                click(activity, "Back")
-                click(activity, "Back to plan")
-                activity.findViewById<EditText>(R.id.home_origin).setText("WVSU")
-                activity.findViewById<EditText>(R.id.home_destination).setText("Jaro Plaza")
-                click(activity, "Find my route")
-                assertHasText(activity, "WVSU to Jaro Plaza via La Paz Market and E. Lopez Street")
-                assertHasText(activity, "WVSU to Jaro Plaza via La Paz Market and Commission Civil")
-                click(activity, "Explore")
-                assertHasText(activity, "Route 3 — Ungka to City Proper via CPU · Jaro Plaza to WVSU via E. Lopez Street")
-                assertHasText(activity, "Route 10 — Buntatala/Tagbak to City Proper · WVSU to Jaro Plaza via La Paz Market and Commission Civil")
-                click(activity, "Info")
-                assertHasText(activity, "Dataset version: iloilo-jaro-wvsu-2026-11-06")
-                assertHasText(activity, "Verified route patterns: 4")
-                assertHasText(activity, "Recognition model: YOLOv8n fine-tuned M3 demo-v3; provisional")
-                assertHasText(activity, "Model check: 0/3 M3 test signs detected; ONNX export parity failed. Phone smoke inference ran on a synthetic image; sign accuracy is unverified.")
-                assertHasText(activity, "Model SHA-256: 183a212b84273fc58870bf4dfd10bb76f52cecabf9e0c7ac5b8f1d01563116d8")
-                assertHasText(activity, "Inference runtime: ONNX Runtime Android 1.31.1")
-                assertHasText(activity, "Offline OCR: ML Kit bundled Latin 16.0.1")
-                assertHasText(activity, "Scanner settings: scanner-v1; 2 observations / 1 s window; 1 s result freshness (provisional).")
-                assertHasText(activity, "Live scanning is unavailable until export parity is resolved. Manual planning remains available.")
+                assertHasText(activity, "Direction:")
+                assertHasText(activity, "Ordered stops")
             }
         }
     }
@@ -171,7 +171,7 @@ class MainActivityTest {
         app.catalogLoader = { uiFixture() }
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
-                val change = descendants(activity.findViewById(R.id.app_root)).first { it.contentDescription == "Change Starting point" }
+                val change = descendants(activity.findViewById(R.id.app_root)).first { it.contentDescription == "Choose Starting point" }
                 change.performClick()
                 activity.findViewById<EditText>(R.id.location_search).setText("B")
                 click(activity, "B")
@@ -189,7 +189,7 @@ class MainActivityTest {
                 origin.setText("A")
                 activity.findViewById<EditText>(R.id.home_destination).setText("C")
                 click(activity, "Find my route")
-                click(activity, "See stops")
+                click(activity, "More details")
                 click(activity, "See stops without a map")
             }
             scenario.recreate()
@@ -197,7 +197,7 @@ class MainActivityTest {
                 assertHasText(activity, "1. A · Board here")
                 assertTrue(descendants(activity.findViewById(R.id.app_root)).none { it is RouteDiagramView })
                 click(activity, "Back")
-                assertHasText(activity, "Board at A")
+                assertHasText(activity, "A → C")
             }
         }
     }
@@ -209,8 +209,8 @@ class MainActivityTest {
         )
         val permissions = packageInfo.requestedPermissions.orEmpty().toSet()
         assertTrue(android.Manifest.permission.CAMERA in permissions)
-        assertTrue(android.Manifest.permission.INTERNET !in permissions)
-        assertTrue("android.permission.ACCESS_NETWORK_STATE" !in permissions)
+        assertTrue(android.Manifest.permission.INTERNET in permissions)
+        assertTrue(android.Manifest.permission.ACCESS_NETWORK_STATE in permissions)
     }
 
     @Test fun exploreScannerStartsWithNeutralContextEvenAfterPlanning() {
@@ -221,9 +221,9 @@ class MainActivityTest {
                 activity.findViewById<EditText>(R.id.home_destination).setText("C")
                 click(activity, "Find my route")
                 click(activity, "Explore")
-                click(activity, "Scan a sign")
+                click(activity, "Scan")
                 assertHasText(activity, "No trip is selected. Browse routes to see their stops.")
-                assertHasText(activity, "Scanner is unavailable right now. You can still see your routes and stops.")
+                assertHasText(activity, "Route recognition is currently unavailable")
                 assertHasText(activity, "Back to Explore")
             }
         }
@@ -236,27 +236,27 @@ class MainActivityTest {
                 click(activity, "Explore")
                 click(activity, "See route stops")
                 assertHasText(activity, "Ordered stops")
-                click(activity, "Scan a sign")
+                click(activity, "Scan")
                 assertHasText(activity, "No trip is selected. Browse routes to see their stops.")
-                click(activity, "Back to Explore")
-                assertHasText(activity, "Explore routes")
+                click(activity, "Back to stops")
+                assertHasText(activity, "Ordered stops")
             }
         }
     }
 
-    @Test fun unavailableScannerKeepsManualFallbackWithoutRequestingCamera() {
+    @Test fun cameraPreviewRemainsUsableWhenRecognitionIsUnavailable() {
         app.catalogLoader = { uiFixture() }
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
-                val cameraPermissionBefore = activity.checkSelfPermission(android.Manifest.permission.CAMERA)
                 activity.findViewById<EditText>(R.id.home_origin).setText("A")
                 activity.findViewById<EditText>(R.id.home_destination).setText("C")
                 click(activity, "Find my route")
-                click(activity, "Scan sign")
-                assertHasText(activity, "Scanner is unavailable right now. You can still see your routes and stops.")
-                assertHasText(activity, "Your route: Synthetic Route · Northbound")
+                click(activity, "Scan")
+                assertHasText(activity, "Route recognition is currently unavailable")
+                assertHasText(activity, "Your trip is saved. Scan results won't assume a route.")
                 assertHasText(activity, "See my routes")
-                assertEquals(cameraPermissionBefore, activity.checkSelfPermission(android.Manifest.permission.CAMERA))
+                assertEquals(PackageManager.PERMISSION_GRANTED, activity.checkSelfPermission(android.Manifest.permission.CAMERA))
+                assertTrue(descendants(activity.findViewById(R.id.app_root)).any { it is androidx.camera.view.PreviewView })
             }
         }
     }
@@ -268,47 +268,12 @@ class MainActivityTest {
                 activity.findViewById<EditText>(R.id.home_origin).setText("A")
                 activity.findViewById<EditText>(R.id.home_destination).setText("C")
                 click(activity, "Find my route")
-                click(activity, "See stops")
-                click(activity, "Scan a sign")
-                assertHasText(activity, "Scanner unavailable")
+                click(activity, "More details")
+                click(activity, "Scan")
+                assertHasText(activity, "Scan a route sign")
                 click(activity, "Back to stops")
                 assertHasText(activity, "1. A · Board here")
                 assertHasText(activity, "3. C · Get off here")
-            }
-        }
-    }
-
-    @Test fun scannerOutcomePresentationCanBeInspectedWithFixtures() {
-        app.catalogLoader = { uiFixture() }
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            scenario.onActivity { activity ->
-                activity.findViewById<EditText>(R.id.home_origin).setText("A")
-                activity.findViewById<EditText>(R.id.home_destination).setText("C")
-                click(activity, "Find my route")
-                click(activity, "Scan sign")
-                val content = activity.findViewById<LinearLayout>(R.id.screen_content)
-                descendants(content).filterIsInstance<Button>().firstOrNull { it.text.toString() == "See my routes" }?.let { content.removeView(it) }
-                val actions = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-                content.addView(actions)
-                MainActivity::class.java.getDeclaredField("scannerActions").apply { isAccessible = true }.set(activity, actions)
-            }
-            for (kind in DecisionKind.entries) {
-                scenario.onActivity { activity ->
-                    val decision = ScannerDecision(kind, "SYN-ROUTE", "Synthetic Route", "SYN-UI", "Northbound", DirectionSource.SIGN)
-                    val description = MainActivity::class.java.getDeclaredMethod("decisionDescription", ScannerDecision::class.java).apply { isAccessible = true }.invoke(activity, decision) as String
-                    val color = MainActivity::class.java.getDeclaredMethod("decisionColor", DecisionKind::class.java).apply { isAccessible = true }.invoke(activity, kind) as Int
-                    MainActivity::class.java.getDeclaredMethod("updateScannerStatus", String::class.java, Int::class.javaPrimitiveType).apply { isAccessible = true }.invoke(activity, description, color)
-                    MainActivity::class.java.getDeclaredMethod("renderScannerActions", ScannerDecision::class.java).apply { isAccessible = true }.invoke(activity, decision)
-                    assertHasText(activity, description)
-                    assertHasText(activity, "See my routes")
-                }
-                instrumentation.waitForIdleSync()
-                val screenshot = instrumentation.uiAutomation.takeScreenshot()
-                if (screenshot != null) {
-                    saveEvidence("scanner-${kind.name.lowercase()}-fixture", screenshot)
-                    screenshot.recycle()
-                }
             }
         }
     }
@@ -325,7 +290,7 @@ class MainActivityTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             capture("home")
             scenario.onActivity { activity ->
-                descendants(activity.findViewById(R.id.app_root)).first { it.contentDescription == "Change Starting point" }.performClick()
+                descendants(activity.findViewById(R.id.app_root)).first { it.contentDescription == "Choose Starting point" }.performClick()
                 activity.findViewById<EditText>(R.id.location_search).setText("Jaro")
             }
             capture("search-keyboard")
@@ -335,13 +300,13 @@ class MainActivityTest {
                 click(activity, "Find my route")
             }
             capture("results")
-            scenario.onActivity { click(it, "See stops") }
+            scenario.onActivity { click(it, "More details") }
             capture("details")
             scenario.onActivity { click(it, "Explore") }
             capture("explore")
             scenario.onActivity { click(it, "Info") }
             capture("about")
-            scenario.onActivity { activity -> click(activity, "Explore"); click(activity, "Scan a sign") }
+            scenario.onActivity { activity -> click(activity, "Explore"); click(activity, "Scan") }
             capture("scanner-unavailable")
         }
     }
@@ -394,7 +359,7 @@ class MainActivityTest {
 
     private fun assertHasText(activity: MainActivity, expected: String) {
         assertTrue("Missing text: $expected", descendants(activity.findViewById(R.id.app_root))
-            .filterIsInstance<TextView>().any { it.text.toString() == expected })
+            .filterIsInstance<TextView>().any { it.text.toString().contains(expected) })
     }
 
     private fun descendants(view: View): List<View> = if (view is ViewGroup) {

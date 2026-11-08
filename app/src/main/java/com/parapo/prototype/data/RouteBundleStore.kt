@@ -23,6 +23,7 @@ data class RouteBundleManifest(
 
 sealed interface BundleReplaceResult {
     data object Installed : BundleReplaceResult
+    data object Unchanged : BundleReplaceResult
     data class Rejected(val reason: String) : BundleReplaceResult
 }
 
@@ -34,16 +35,15 @@ class RouteBundleStore(private val context: Context) {
     @Synchronized
     fun load(): RouteCatalog? {
         recover()
-        if (!database.exists()) {
-            val bundled = runCatching { context.assets.open("routes.bundle") }.getOrNull()
-                ?: return null
-            if (replaceBundle(bundled) !is BundleReplaceResult.Installed) return null
-        }
+        val bundled = runCatching { context.assets.open("routes.bundle") }.getOrNull()
+        if (bundled != null) replaceBundle(bundled)
+        if (!database.exists()) return null
         return runCatching { readValidated(database) }.getOrNull()
     }
 
     @Synchronized
     fun replaceBundle(input: InputStream): BundleReplaceResult = try {
+        recover()
         val archive = input.use { readBounded(it, MAX_BUNDLE_BYTES) }
         val entries = readArchive(archive)
         val manifest = parseManifest(entries.getValue("manifest.json"))
@@ -55,9 +55,26 @@ class RouteBundleStore(private val context: Context) {
         require(catalog.info.datasetVersion == manifest.datasetVersion) { "Dataset version does not match manifest" }
         require(catalog.info.publicationDate == manifest.publicationDate) { "Publication date does not match manifest" }
         require(catalog.info.sourceRefs.toSet() == manifest.sourceRefs.toSet()) { "Source references do not match manifest" }
-        if (database.exists()) Files.copy(database.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING)
-        Files.move(pending.toPath(), database.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-        BundleReplaceResult.Installed
+        val unchanged = if (database.exists()) {
+            val current = readValidated(database)
+            val dateOrder = LocalDate.parse(manifest.publicationDate).compareTo(LocalDate.parse(current.info.publicationDate))
+            require(dateOrder >= 0) { "Route data is older than the installed dataset" }
+            if (dateOrder == 0) {
+                require(manifest.datasetVersion == current.info.datasetVersion) { "Different route data cannot reuse the installed publication date" }
+                require(sha256(database.readBytes()).equals(manifest.sqliteSha256, ignoreCase = true)) {
+                    "Installed dataset version has different route data"
+                }
+                true
+            } else false
+        } else false
+        if (unchanged) {
+            pending.delete()
+            BundleReplaceResult.Unchanged
+        } else {
+            if (database.exists()) Files.copy(database.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            Files.move(pending.toPath(), database.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            BundleReplaceResult.Installed
+        }
     } catch (error: Exception) {
         pending.delete()
         BundleReplaceResult.Rejected(error.message ?: "Invalid route bundle")
