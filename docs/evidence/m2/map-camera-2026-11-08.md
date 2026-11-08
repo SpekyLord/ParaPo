@@ -51,10 +51,12 @@ The installable normal debug APK is `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Phone evidence
 
-- [Preview-only screen](screenshots/tecno-scanner-preview.png) and [preview movement check](screenshots/tecno-scanner-preview-motion-check.png) (both captured before the back-camera correction above)
-- [Permission recovery](screenshots/tecno-scanner-permission-recovered.png) and [preview after resume](screenshots/tecno-scanner-resume.png)
-- [Street map with labels and markers](screenshots/tecno-results-labeled.png), [selected route](screenshots/tecno-results-selected.png), and [reverse journey results](screenshots/tecno-results-reverse-final.png)
-- [Route 3 forward details](screenshots/tecno-details-route3.png), [Route 10 forward](screenshots/tecno-details-route10-forward.png), [Route 10 reverse](screenshots/tecno-details-route10-reverse.png), and [Route 3 reverse after the camera-state fix](screenshots/tecno-details-route3-reverse-final.png)
-- [Pan and zoom](screenshots/tecno-details-pan-zoom.png), [selected route restored on return](screenshots/tecno-results-returned-route3.png), and [offline fallback](screenshots/tecno-offline-fallback.png)
+- [Preview-only screen](screenshots/cropped/tecno-scanner-preview.png) and [preview movement check](screenshots/cropped/tecno-scanner-preview-motion-check.png) (both captured before the back-camera correction above)
+- [Permission recovery](screenshots/cropped/tecno-scanner-permission-recovered.png) and [preview after resume](screenshots/cropped/tecno-scanner-resume.png)
+- [Street map with labels and markers](screenshots/cropped/tecno-results-labeled.png), [selected route](screenshots/cropped/tecno-results-selected.png), and [reverse journey results](screenshots/cropped/tecno-results-reverse-final.png)
+- [Route 3 forward details](screenshots/cropped/tecno-details-route3.png), [Route 10 forward](screenshots/cropped/tecno-details-route10-forward.png), [Route 10 reverse](screenshots/cropped/tecno-details-route10-reverse.png), and [Route 3 reverse after the camera-state fix](screenshots/cropped/tecno-details-route3-reverse-final.png)
+- [Pan and zoom](screenshots/cropped/tecno-details-pan-zoom.png), [selected route restored on return](screenshots/cropped/tecno-results-returned-route3.png), and [offline fallback](screenshots/cropped/tecno-offline-fallback.png)
+
+The images linked above are presentation crops with only the Android status and system-navigation bars removed. Original source captures remain unmodified beside them.
 
 Older screenshots and evidence are preserved; only the files linked above are cited for this implementation. The recognition model remains unready, exact Route 3/10 joins remain unresolved, and fresh basemap tiles require network access.

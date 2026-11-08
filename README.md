@@ -25,7 +25,7 @@ ParaPo lets someone choose two places and see which of the supported jeepney rou
 | **Map** | Pan and zoom street maps in Results and Route Details; select a route to highlight its path and journey stops. |
 
 <p align="center">
-  <img src="docs/evidence/m2/screenshots/tecno-results-labeled.png" width="560" alt="ParaPo route results showing Routes 3 and 10 over Iloilo streets with boarding and alighting markers">
+  <img src="docs/evidence/m2/screenshots/cropped/tecno-results-labeled.png" width="560" alt="ParaPo route results showing Routes 3 and 10 over Iloilo streets with boarding and alighting markers">
 </p>
 
 ### Demo status
