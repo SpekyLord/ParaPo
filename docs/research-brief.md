@@ -2,6 +2,8 @@
 
 Research date: 4 November 2026. Prepared from the supplied concept, DSA rubric, three lecture PDFs, and public sources. This is research and a proposed evaluation plan; no application, model benchmark, or route field verification was performed.
 
+Follow-up: the [vehicle-first scanner review (8 November 2026)](#vehicle-first-scanner-review-2026-11-08) records the current code/data findings, alternatives, and recommendation. The original brief below remains dated context; use the follow-up for this scanner decision.
+
 ## Assessment
 
 **ParaPo is a defensible Computer Vision and DSA project if its main contribution is testing camera-assisted identification of a particular jeepney against a verified, directional journey.** A small Android prototype is a reasonable objective. Reliable recognition of distant, fast-moving jeepneys under arbitrary conditions remains unproven.
@@ -160,3 +162,86 @@ Confidence is high that related navigation and vehicle-sign recognition work exi
 The study used targeted web searches for local route planning, related OCR research, transit data modeling, graph methods, and official mobile inference documentation. The full ByaHero paper, local planning presentation, app listing, and technical documentation were examined; the CPU item was abstract-only, and the bus-recognition paper was accessible through indexed publisher excerpts after direct-page access failed. No source's reported accuracy was treated as a ParaPo result.
 
 **Proceed with a narrow prototype, and make the camera-readability pilot the first decision point.** If readable signs only become available after the vehicle has passed, the live approaching-jeepney claim must be narrowed to stationary or slow-moving vehicles rather than hidden behind a high image-test accuracy.
+
+## Vehicle-first scanner review (2026-11-08)
+
+**Recommendation: modify the proposal. Make the selected target and sign ownership explicit, keep vehicle type optional, and defer automatic vehicle-first detection until a small comparison shows that it helps.** This is a research finding and proposed next step, not an implemented scanner change or a completed experiment. No training, inference, phone test, dependency installation, or recognition enablement was performed for this review.
+
+### What identifying the correct vehicle requires
+
+Keep these conclusions separate:
+
+| Evidence | What it establishes |
+| --- | --- |
+| Vehicle type | Jeepney, bus, or uncertain appearance; optional supporting information. |
+| Physical target identity | This is still the particular vehicle/sign selected by the user, including across frames. A permanent vehicle identifier is unnecessary. |
+| Sign ownership | This sign belongs to that physical vehicle. Neither vehicle type nor a nearby rectangle establishes ownership automatically. |
+| Readable text | OCR recovered enough visible sign content to identify a route. |
+| Route identity | Observed codes/aliases resolve against the catalog, retaining unknown and conflicting outcomes. |
+| Direction/branch | A verified directional headsign or explicit confirmation about the selected vehicle establishes the pattern. Listing both route termini does not establish travel direction. |
+| Journey compatibility | The pattern permits boarding at the selected occurrence and alighting later, within supported coverage. |
+
+The destination the commuter wants is never evidence of the observed vehicle's route or direction. Unreadable text stays unreadable; ambiguous ownership stays uncertain; unsupported routes receive a coverage message; unresolved direction requires confirmation. A target or journey change, target loss, pause, or conflicting evidence clears prior compatibility. Keep manual planning available. These distinctions follow [PRD section 9](PRD.md#9-recognition-and-decision-rules) and the [decision logic](../app/src/main/java/com/parapo/prototype/scanner/ScannerDecisions.kt#L223-L263).
+
+### Findings from the current project
+
+| Finding | Evidence and interpretation |
+| --- | --- |
+| The app currently provides a back-camera preview without live recognition. | Current [MainActivity camera binding](../app/src/main/java/com/parapo/prototype/ui/MainActivity.kt#L837-L870) binds Preview without attaching ScannerPipeline. Older M4 references to a LIVE_SCANNER_ENABLED flag describe an earlier implementation. Selection/callback helpers in source are not live recognition evidence. |
+| The detector learns one class, route_sign. | [Dataset preparation](../tools/prepare_detection_demo.py#L73-L98) writes only sign boxes and that class. There is no learned vehicle-to-sign relationship. |
+| Source-resolution OCR cropping already exists. | [ScannerPipeline](../app/src/main/java/com/parapo/prototype/scanner/ScannerPipeline.kt#L129-L154) detects on a resized input, maps boxes back, and sends a crop of the unresized upright analysis bitmap to ML Kit. This is existing dormant pipeline behavior, not a proposed new feature or proof of live OCR quality. |
+| Selected-sign association and stale-result protection already exist. | [SingleSignTarget](../app/src/main/java/com/parapo/prototype/scanner/ScannerDecisions.kt#L95-L127) rejects weak/competing overlap matches. [TemporalDecisionTracker](../app/src/main/java/com/parapo/prototype/scanner/ScannerDecisions.kt#L276-L361) uses provisional two-observation agreement and one-second freshness, with target/session/context checks. [Unit fixtures](../app/src/test/java/com/parapo/prototype/scanner/ScannerDecisionsTest.kt#L117-L175) check deterministic behavior, not real ownership through crossings. |
+| Localization and export differences remain unresolved. | [Recorded v10 validation](evidence/m3/results-2026-11-08.md#L28-L32): desktop found 2/3 signs with 2 false boxes; phone found 2/3 with 1 extra box. Host parity failed and phone outputs differed. No v10 test inference was recorded. Three repeatedly inspected validation photos cannot establish general performance. |
+| Recorded phone speed covers the detector only. | [Local phone record](../datasets/m3-samples/runs/demo-v10/phone-record.json): median 110.18 ms, p95 161.32 ms over 60 inferences on TECNO KJ8 CPU. The boundary is an in-memory bitmap through detector boxes, excluding image decoding, OCR, and UI. It is not complete camera response time. |
+| Desktop text errors warrant a phone OCR diagnostic. | Reported CER is 0.656 on ground-truth crops and 1.453 on detector crops. However, the helper [writes null predicted route codes](../tools/run_yolo_demo.py#L94-L117), so the reported 0/2 code score does not establish that OCR failed to read both numeric codes. The [latest local OCR rows](../datasets/m3-samples/runs/demo-v10-eval-025/ocr-validation.jsonl) contain text beginning with 10 for image 32. EasyOCR with 3x enlargement on desktop does not measure Android ML Kit. |
+| Matching can fail even with perfect OCR. | By source inspection, the printed 03 in 03 UNGKA-ILOILO CITY PROPER VIA CPU is not accepted by the standalone 3 rule, and that whole wording has no matching complete alias. See [matcher](../app/src/main/java/com/parapo/prototype/scanner/ScannerDecisions.kt#L165-L181) and [catalog aliases](../data/iloilo-jaro-wvsu.json#L30-L49). This is an identified implementation gap, not a newly run test or a fix made by this review. |
+
+The catalog supports only Routes 3 and 10 across four Jaro Plaza–WVSU directional patterns. Recognizing a bus-shaped vehicle does not add a supported service. Another service needs verified codes/aliases, directional patterns, allowed boarding/alighting, and compatible ordered stops. See [coverage](../README.md#route-coverage) and [journey lookup](../app/src/main/java/com/parapo/prototype/routing/JourneyPlanner.kt#L28-L43).
+
+### Benefits, failures, and realistic alternatives
+
+A reliable vehicle region could reduce background text and give a small sign more detector pixels. But overlapping vehicle rectangles can both contain one sign; a background sign can project inside a foreground box; a partial vehicle box can exclude its own sign; multiple signs can disagree; and crossings can switch identities. Use visible attachment/context and a uniquely supported owner, or ask the user to select/reframe. A single-frame owner assignment does not establish identity continuity in video.
+
+| Approach | Likely benefit and failures | Data needed | Phone cost / integration / demo fit |
+| --- | --- | --- | --- |
+| Improve existing sign-first selection | Reuses current work and addresses localization/text/matching; crowded ownership and target switching remain possible. | Correct sign boxes/text; owner labels for evaluating crowded examples. | One detector plus selected-crop OCR; least integration work; useful foundation. |
+| User aims at/selects one sign and reads a tight region | Makes intent explicit; aligned OCR can bypass detector misses. Wrong selection or overlapping targets still requires uncertainty. | Text, intended target, and ownership evidence; no new type training. | OCR alone or existing detector plus OCR; modest UI work; best immediate experiment. |
+| Vehicle first, then signs within its region | Could suppress distractions and enlarge signs for detection. A missed/partial vehicle blocks reading; containment remains ambiguous. | Vehicle/sign boxes and explicit owner links; type labels only if classification is tested. | Two dependent detector stages, crop mapping, and more export checks; defer pending evidence. |
+| Detect vehicles and signs together, then associate | Retains full-scene context and permits explicit owner decisions. Correct boxes can still be paired incorrectly. | Both box types and owner links; video IDs for continuity. | One joint model or two models, plus association and retraining; consider only if crowded failures justify it. |
+
+Prefer simple single-target selection/reselection for this demo. A full tracker is justified only if fresh encounters show that this loses useful readable observations. Tracking, including ByteTrack, does not itself solve sign ownership or prove text readability.
+
+### External evidence and transfer limits
+
+- [ML Kit's official guidance](https://developers.google.com/ml-kit/vision/text-recognition/v2/android) emphasizes focus and sufficient character detail, ideally about 16×16 pixels per character. Another detector cannot recover missing image detail; upscaling is not proof of restored text.
+- [Ultralytics' actual COCO class list](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/coco.yaml) has car, bus, and truck, but no jeepney, modern jeepney, or route_sign. A hard jeepney-versus-bus gate could reject a useful modern-jeepney sign. A reliable generic vehicle region may be enough for spatial context; local applicability is unmeasured.
+- [Nanaura et al., ICAROB 2025](https://alife-robotics.co.jp/members2025/icarob/data/html/data/GS/GS6/GS6-3.pdf), sections 2.4–3.2, report 95.5% bus-region recognition but correct route numbers in only 4/6 videos (about 67%). Fixed panel position, orange-display assumptions, and a camera/computer setup limit transfer to local signs and the Tecno.
+- The Philippine [Few-Shot Car Sticker Detection project](https://eneii313.github.io/few-shot-car-sticker-detection/) reports benefits from windshield-first crops on its own sticker dataset. It supports testing contextual crops, not assuming improved jeepney OCR or phone performance.
+- [ByteTrack's original paper](https://arxiv.org/html/2110.06864v3) describes motion/detection association across video frames. It does not establish vehicle-to-sign ownership, and its GPU benchmark is not a Tecno timing result.
+- [PH Vehicles 2](https://universe.roboflow.com/vehicle-detection-and-data-generation/ph-vehicles-2/dataset/1) publicly lists 249 images, one Jeepney class, CC BY 4.0, and export formats. The listing was verified; the archive, sign coverage, and owner annotations were not. It cannot by itself supply jeepney-versus-bus training or the ownership task. [UP Diliman's original Philippine vehicle-detection thesis record](https://digitalarchives.upd.edu.ph/item/54421/9/home) is limited-access; no downloadable dataset was verified.
+
+The Genova paper cited in the original brief remained inaccessible as full text during this follow-up; its reported image accuracy was not treated as evidence of ParaPo performance.
+
+### Minimum missing data and a comparison that could change the recommendation
+
+The [local v10 manifest](../datasets/m3-samples/manifest-v10.jsonl) contains 38 photos and 40 sign boxes, split 32 train / 3 validation / 3 test, with no vehicle IDs/boxes, known patterns, or known directions. The images contain traditional jeepneys, modern bus/minibus-shaped vehicles, crowded scenes, side strips, windshield placards, and an illuminated display. Bus-versus-modern-jeepney service counts remain unknown. Photo 34 shows a front windshield display, despite the earlier rear description. Full-size photos 22 and 28 show different vehicles; that pair is not evidence of split leakage. The ignored photos and run records linked here are local artifacts, unavailable in a clean checkout.
+
+Reuse existing photos for readability, localization, and single-image owner review. On a small crowded subset, label vehicle boxes, individual sign boxes, and explicit sign-owner IDs, allowing owner unknown. Keep exact text separate from independently established route/direction; type labels are optional unless classification is evaluated. For video, add per-vehicle track IDs, occlusion/crossing/target-loss events, and a useful reading window. Still photos cannot establish identity continuity or whether a result arrives before the vehicle passes.
+
+For a focused association pilot, roughly 20–30 fresh independent encounters is a practical planning estimate, not a sufficient training size or a reliability guarantee. Include isolated/crowded views, supported and unsupported routes, traditional/modern layouts, small text/glare, crossings, and target changes. Keep frames/crops/augmentations from one encounter together, group repeated vehicles and sessions where identifiable, and check source lineage and near-duplicates as well as exact hashes. Per-photo encounter/session names do not prove independence. Treat the repeatedly inspected validation set as development evidence; the three test photos already evaluated in v6 do not become untouched because v10 skipped test inference. Preserve old manifests and reports.
+
+**First practical step, proposed only:** test ML Kit on hand-labeled sign crops on the Tecno before investing in another detector. Poor desktop text recovery makes this worth checking, but it is only a hypothesis about the Android engine.
+
+Then compare the same fresh encounters using (1) existing sign-first selection, (2) user-aligned tight-region OCR, and (3) the same sign detector restricted to hand-labeled vehicle regions. Keep OCR, matching, catalog, decision settings, and phone conditions fixed. Hand-labeled vehicle regions are a favorable diagnostic of context benefit, not a deployable detector benchmark. A benefit would justify testing an actual vehicle detector. This supplements, rather than replaces, any course-required three-detector comparison.
+
+Use the [PRD's encounter definitions](PRD.md#metrics-and-decision-units), which supersede the original brief's older green-decision denominator:
+
+- Correct owner assignment and incorrect owner assignments, with the number of attempted assignments and rejected/uncertain cases.
+- Wrong-green fraction: encounters with any incorrect match / encounters receiving any match. A wrong owner is a failure even if its route happens to match the intended vehicle's route.
+- Correct-match coverage: truly eligible encounters with a correct match and no incorrect match / all truly eligible encounters. Report unresolved-direction cases separately instead of silently excluding them.
+- Uncertainty and definitive-decision coverage across all evaluated encounters. With no green encounters, wrong-green fraction is undefined; always refusing to answer is not success.
+- Complete phone response time, time to first stable correct result, and results arriving before the useful window closes; include image processing, OCR, matching, stabilization, and display.
+
+The [current encounter evaluator](../tools/experiment.py#L355-L418) compares pattern IDs, so an ownership field/manual record is needed to expose wrong-owner results when both vehicles share a route. Report raw counts and uncertainty intervals; the pilot cannot establish 100% accuracy or a low population error rate.
+
+Reconsider vehicle-first detection if readable text and corrected matching work adequately, but fresh encounters still show ownership errors under explicit selection, and an actual vehicle-context pipeline reduces them without unacceptable losses in correct-match coverage or phone response time. Until that evidence exists, single-target selection is the smallest useful direction. Live ML Kit readability, service-class counts, encounter independence, and timely ownership through motion remain unverified.
