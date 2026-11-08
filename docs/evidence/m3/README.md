@@ -1,6 +1,6 @@
 # M3 research tooling and collection protocol
 
-This directory documents the tooling and local demo runs. Twenty user-supplied images are staged under ignored `datasets/m3-samples/`; 18 vehicle scenes are labeled, and two poster graphics are excluded. The original v4 manifest freezes 10 train / 2 validation / 2 test. A v5 manifest adds four photos to training and freezes 14 train / 2 validation / 2 test. YOLOv8n was retrained and evaluated on v5, but it still missed all three test signs; its ONNX export also failed host parity. The phone smoke test ran the existing provisional model on a synthetic image only, not the v5 export. SSD MobileNetV2 and EfficientDet-Lite0 still have no comparable runs. The test split has only two photos and has been previewed, so the measurements are exploratory. See [M3 demo results](results-2026-11-07.md). The checked-in synthetic fixture remains separate and cannot be used to claim candidate performance.
+This directory documents the tooling and local demo runs. The ignored local sample folder contains 38 vehicle photos; the two poster graphics are excluded. User review led to nine corrected sign boxes; v10 moves image 30's box another 10px down while keeping the 32/3/3 split. A v10 YOLOv8n retry finished 20 epochs; validation on three photos reached mAP50 0.501 and mAP50–95 0.118. At validation-selected score 0.25, phone inference found 2/3 signs with one extra box; median detector latency was 110ms and p95 161ms on the TECNO KJ8 CPU. Validation OCR was poor (ground-truth crop CER 0.656; detector crop CER 1.453). Image 28 is a Ticud–Lapaz route outside WVSU route coverage; image 34 is a single neon/LED board style absent from training, and the model missed it. ONNX host and phone parity still fail, so v10 is not in the app. The normal debug app is installed on the phone with the manual planner; its scanner remains disabled. SSD MobileNetV2 and EfficientDet-Lite0 still have no comparable runs, so there is no model winner. Data/split checks, the synthetic smoke check, and 19 Python tests passed. See [Nov. 8 M3 results](results-2026-11-08.md) and [v5 model results](results-2026-11-07.md). The checked-in synthetic fixture remains separate and cannot be used to claim candidate performance.
 
 ## Reproduce the tooling check
 
@@ -10,6 +10,8 @@ From the repository root, with Python 3.12 or later:
 python -m unittest discover -s tools/tests
 python tools/experiment.py smoke --fixture tools/fixtures/m3-synthetic/
 python tools/experiment.py validate --manifest tools/fixtures/m3-synthetic/manifest.jsonl
+python tools/experiment.py verify --manifest datasets/m3-samples/manifest-v10.jsonl --split-record datasets/m3-samples/split-v10.json
+python tools/prepare_detection_demo.py --manifest datasets/m3-samples/manifest-v10.jsonl --output datasets/m3-samples/yolo-v10
 $env:ANDROID_HOME = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
 $env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
 .\gradlew.bat testDebugUnitTest connectedDebugAndroidTest
@@ -60,7 +62,7 @@ python tools/experiment.py report --manifest <manifest.jsonl> --split-record <fr
 
 The report emits detection precision/recall at the pinned score/IoU, AP50 and AP50–95, pattern/direction confusion with unknowns, OCR character error/exact code accuracy by crop source, condition/sign-size breakdowns, wrong-green and matching-recall counts with Wilson 95% intervals, abstention, coverage, late decisions, and latency summaries when supplied. It reports zero denominators as `not estimable`. Do not pool repeated frames as independent encounters. Missing crop or timing inputs are not measured; record them as unavailable rather than treating them as zero.
 
-`tools/run_yolo_demo.py` runs an existing YOLO checkpoint and EasyOCR on the frozen validation/test split; it does not train a model. Ultralytics, PyTorch, OpenCV, and EasyOCR are optional packages installed in a local virtual environment. There is no SSD MobileNetV2 or EfficientDet-Lite0 training/inference adapter yet, and no candidate has been selected.
+`tools/run_yolo_demo.py` runs an existing YOLO checkpoint and EasyOCR on a selected frozen split; `--split validation` avoids reading test samples. It does not train a model. Ultralytics, PyTorch, OpenCV, and EasyOCR are optional packages installed in a local virtual environment. There is no SSD MobileNetV2 or EfficientDet-Lite0 training/inference adapter yet, and no candidate has been selected.
 
 ## Reproduce the real YOLO demo
 
